@@ -1,0 +1,31 @@
+{
+  "name": "ts-language-mcp",
+  "version": "1.0.0",
+  "description": "TypeScript Language Server exposed via MCP for AI agents",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "ts-language-mcp": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc --watch",
+    "test": "vitest",
+    "test:run": "vitest run"
+  },
+  "keywords": ["mcp", "typescript", "language-server", "ai"],
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "typescript": "^5.4.0",
+    "minimatch": "^9.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "vitest": "^1.6.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run test:run:*)",
+      "Bash(npx vitest run --include \"tests/**/*.test.ts\")",
+      "Bash(npx vitest:*)",
+      "Bash(npm test:*)",
+      "Bash(npx tsc:*)",
+      "Bash(dir:*)",
+      "Bash(npm run build:*)"
+    ]
+  }
+}

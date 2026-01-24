@@ -1,0 +1,50 @@
+{
+  "name": "ts-language-mcp",
+  "version": "1.0.0",
+  "description": "TypeScript Language Server exposed via MCP for AI agents",
+  "author": "jgauffin",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jgauffin/ts-language-mcp.git"
+  },
+  "homepage": "https://github.com/jgauffin/ts-language-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/jgauffin/ts-language-mcp/issues"
+  },
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "ts-language-mcp": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc --watch",
+    "test": "vitest",
+    "test:run": "vitest run"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "typescript",
+    "language-server",
+    "ai",
+    "code-intelligence",
+    "ast",
+    "refactoring"
+  ],
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "minimatch": "^9.0.0",
+    "typescript": "^5.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "vite-tsconfig-paths": "^6.0.4",
+    "vitest": "^4.0.18"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
