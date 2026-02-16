@@ -294,6 +294,9 @@ npx ts-language-mcp
 
 # Analyze specific project
 npx ts-language-mcp /path/to/typescript/project
+
+# Custom server name and description
+npx ts-language-mcp --name my-ts-server --description "My project intelligence" /path/to/project
 ```
 
 ### MCP Client Configuration
@@ -305,7 +308,7 @@ Add to your MCP client (Claude Desktop, Cline, etc.):
   "mcpServers": {
     "typescript": {
       "command": "node",
-      "args": ["/path/to/ts-language-mcp/dist/index.js", "/path/to/your/project"]
+      "args": ["/path/to/ts-language-mcp/dist/index.js", "--name", "my-project-ts", "--description", "TypeScript intelligence for my-project", "/path/to/your/project"]
     }
   }
 }

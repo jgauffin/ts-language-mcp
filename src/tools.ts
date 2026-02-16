@@ -1,6 +1,6 @@
 import type { TypeScriptLanguageService } from './language-service.js';
 import type { AstFinder } from './ast-finder.js';
-import type { FindParams, PositionParams, SymbolKind, SearchScope, DiagnosticSeverity, FormatOptions } from './types.js';
+import type { FindParams, PositionParams, DiagnosticSeverity, FormatOptions } from './types.js';
 
 /**
  * Path utilities for cross-platform compatibility.
@@ -212,143 +212,143 @@ export const TOOL_SCHEMAS = {
  * Each tool has a name, description, and input schema.
  */
 export const TOOL_DEFINITIONS = [
-  {
-    name: 'get_hover',
-    description:
-      'Get type information and documentation for the symbol at a position. ' +
-      'Returns the type signature and any JSDoc comments.',
-    inputSchema: TOOL_SCHEMAS.positionParams,
-  },
-  {
-    name: 'get_definition',
-    description:
-      'Find where a symbol is defined. Jump from usage to declaration.',
-    inputSchema: TOOL_SCHEMAS.positionParams,
-  },
-  {
-    name: 'get_references',
-    description:
-      'Find all usages of a symbol across the project. ' +
-      'Each reference includes its kind: "definition", "read", or "write".',
-    inputSchema: TOOL_SCHEMAS.positionParams,
-  },
-  {
-    name: 'get_diagnostics',
-    description:
-      'Get TypeScript errors and warnings for a file. Returns compiler diagnostics.',
-    inputSchema: TOOL_SCHEMAS.fileParam,
-  },
-  {
-    name: 'get_symbols',
-    description:
-      'List all symbols (functions, classes, etc.) defined in a file as a flat list. ' +
-      'For hierarchical/nested structure, use get_outline instead.',
-    inputSchema: TOOL_SCHEMAS.fileParam,
-  },
-  {
-    name: 'get_completions',
-    description:
-      'Get code completion suggestions at a position. Context-aware suggestions.',
-    inputSchema: TOOL_SCHEMAS.positionParams,
-  },
-  {
-    name: 'get_signature',
-    description:
-      'Get function signature help when cursor is inside a function call\'s parentheses. ' +
-      'Shows parameter names, types, and which parameter is active based on cursor position.',
-    inputSchema: TOOL_SCHEMAS.positionParams,
-  },
-  {
-    name: 'analyze_position',
-    description:
-      'Get comprehensive analysis at a position: hover info, definition, references, ' +
-      'diagnostics, and signature help in one call.',
-    inputSchema: TOOL_SCHEMAS.positionParams,
-  },
-  {
-    name: 'find',
-    description:
-      'Search for symbols in the AST by name pattern and kind. ' +
-      'Supports glob patterns (*Service), regex (/^get/), and filtering by ' +
-      'symbol kind (function, class, interface, string, comment, etc.) and export status.',
-    inputSchema: TOOL_SCHEMAS.findParams,
-  },
-  {
-    name: 'get_implementations',
-    description:
-      'Find all implementations of an interface or abstract method. ' +
-      'Useful for understanding polymorphic code.',
-    inputSchema: TOOL_SCHEMAS.positionParams,
-  },
-  {
-    name: 'get_imports',
-    description:
-      'List all imports in a file with their details (named imports, defaults, namespaces).',
-    inputSchema: TOOL_SCHEMAS.fileParam,
-  },
-  {
-    name: 'get_outline',
-    description:
-      'Get hierarchical structure/outline of a file. ' +
-      'Returns nested symbols with their ranges.',
-    inputSchema: TOOL_SCHEMAS.fileParam,
-  },
-  {
-    name: 'rename_preview',
-    description:
-      'Preview what locations would change when renaming a symbol. ' +
-      'Shows all affected files and positions without making changes.',
-    inputSchema: TOOL_SCHEMAS.renameParams,
-  },
-  {
-    name: 'get_call_hierarchy',
-    description:
-      'Get call hierarchy for a function/method. ' +
-      'Direction: "incoming" shows who calls this, "outgoing" shows what this calls.',
-    inputSchema: TOOL_SCHEMAS.callHierarchyParams,
-  },
-  {
-    name: 'get_type_hierarchy',
-    description:
-      'Get type hierarchy for a class/interface. ' +
-      'Direction: "supertypes" shows parents, "subtypes" shows implementations/extensions.',
-    inputSchema: TOOL_SCHEMAS.typeHierarchyParams,
-  },
-  {
-    name: 'batch_analyze',
-    description:
-      'Get hover, definition, references, diagnostics, and signature for multiple positions in one call. ' +
-      'Use the "include" parameter to select which analyses to run (default: all).',
-    inputSchema: TOOL_SCHEMAS.batchAnalyzeParams,
-  },
-  {
-    name: 'rename_symbol',
-    description:
-      'Rename a symbol across the project. Applies changes to all files in memory. ' +
-      'Returns summary of files modified and total changes made.',
-    inputSchema: TOOL_SCHEMAS.renameParams,
-  },
-  {
-    name: 'get_all_diagnostics',
-    description:
-      'Get TypeScript errors and warnings for all files in the project. ' +
-      'Useful for checking project health after changes. Optionally filter by severity.',
-    inputSchema: TOOL_SCHEMAS.allDiagnosticsParams,
-  },
-  {
-    name: 'format_document',
-    description:
-      'Format a TypeScript/JavaScript file using TypeScript\'s built-in formatter. ' +
-      'Applies formatting changes to the file in memory.',
-    inputSchema: TOOL_SCHEMAS.formatDocumentParams,
-  },
-  {
-    name: 'get_workspace_symbols',
-    description:
-      'Fast symbol search across the workspace by name. ' +
-      'Faster than the find tool for simple name lookups. Supports fuzzy matching.',
-    inputSchema: TOOL_SCHEMAS.workspaceSymbolsParams,
-  },
+    {
+      name: 'get_hover',
+      description:
+        'Get type information and documentation for the symbol at a position. ' +
+        'Returns the type signature and any JSDoc comments.',
+      inputSchema: TOOL_SCHEMAS.positionParams,
+    },
+    {
+      name: 'get_definition',
+      description:
+        'Find where a symbol is defined. Jump from usage to declaration.',
+      inputSchema: TOOL_SCHEMAS.positionParams,
+    },
+    {
+      name: 'get_references',
+      description:
+        'Find all usages of a symbol across the project. ' +
+        'Each reference includes its kind: "definition", "read", or "write".',
+      inputSchema: TOOL_SCHEMAS.positionParams,
+    },
+    {
+      name: 'get_diagnostics',
+      description:
+        'Get TypeScript errors and warnings for a file. Returns compiler diagnostics.',
+      inputSchema: TOOL_SCHEMAS.fileParam,
+    },
+    {
+      name: 'get_symbols',
+      description:
+        'List all symbols (functions, classes, etc.) defined in a file as a flat list. ' +
+        'For hierarchical/nested structure, use get_outline instead.',
+      inputSchema: TOOL_SCHEMAS.fileParam,
+    },
+    {
+      name: 'get_completions',
+      description:
+        'Get code completion suggestions at a position. Context-aware suggestions.',
+      inputSchema: TOOL_SCHEMAS.positionParams,
+    },
+    {
+      name: 'get_signature',
+      description:
+        'Get function signature help when cursor is inside a function call\'s parentheses. ' +
+        'Shows parameter names, types, and which parameter is active based on cursor position.',
+      inputSchema: TOOL_SCHEMAS.positionParams,
+    },
+    {
+      name: 'analyze_position',
+      description:
+        'Get comprehensive analysis at a position: hover info, definition, references, ' +
+        'diagnostics, and signature help in one call.',
+      inputSchema: TOOL_SCHEMAS.positionParams,
+    },
+    {
+      name: 'find',
+      description:
+        'Search for symbols in the AST by name pattern and kind. ' +
+        'Supports glob patterns (*Service), regex (/^get/), and filtering by ' +
+        'symbol kind (function, class, interface, string, comment, etc.) and export status.',
+      inputSchema: TOOL_SCHEMAS.findParams,
+    },
+    {
+      name: 'get_implementations',
+      description:
+        'Find all implementations of an interface or abstract method. ' +
+        'Useful for understanding polymorphic code.',
+      inputSchema: TOOL_SCHEMAS.positionParams,
+    },
+    {
+      name: 'get_imports',
+      description:
+        'List all imports in a file with their details (named imports, defaults, namespaces).',
+      inputSchema: TOOL_SCHEMAS.fileParam,
+    },
+    {
+      name: 'get_outline',
+      description:
+        'Get hierarchical structure/outline of a file. ' +
+        'Returns nested symbols with their ranges.',
+      inputSchema: TOOL_SCHEMAS.fileParam,
+    },
+    {
+      name: 'rename_preview',
+      description:
+        'Preview what locations would change when renaming a symbol. ' +
+        'Shows all affected files and positions without making changes.',
+      inputSchema: TOOL_SCHEMAS.renameParams,
+    },
+    {
+      name: 'get_call_hierarchy',
+      description:
+        'Get call hierarchy for a function/method. ' +
+        'Direction: "incoming" shows who calls this, "outgoing" shows what this calls.',
+      inputSchema: TOOL_SCHEMAS.callHierarchyParams,
+    },
+    {
+      name: 'get_type_hierarchy',
+      description:
+        'Get type hierarchy for a class/interface. ' +
+        'Direction: "supertypes" shows parents, "subtypes" shows implementations/extensions.',
+      inputSchema: TOOL_SCHEMAS.typeHierarchyParams,
+    },
+    {
+      name: 'batch_analyze',
+      description:
+        'Get hover, definition, references, diagnostics, and signature for multiple positions in one call. ' +
+        'Use the "include" parameter to select which analyses to run (default: all).',
+      inputSchema: TOOL_SCHEMAS.batchAnalyzeParams,
+    },
+    {
+      name: 'rename_symbol',
+      description:
+        'Rename a symbol across the project. Applies changes to all files in memory. ' +
+        'Returns summary of files modified and total changes made.',
+      inputSchema: TOOL_SCHEMAS.renameParams,
+    },
+    {
+      name: 'get_all_diagnostics',
+      description:
+        'Get TypeScript errors and warnings for all files in the project. ' +
+        'Useful for checking project health after changes. Optionally filter by severity.',
+      inputSchema: TOOL_SCHEMAS.allDiagnosticsParams,
+    },
+    {
+      name: 'format_document',
+      description:
+        'Format a TypeScript/JavaScript file using TypeScript\'s built-in formatter. ' +
+        'Applies formatting changes to the file in memory.',
+      inputSchema: TOOL_SCHEMAS.formatDocumentParams,
+    },
+    {
+      name: 'get_workspace_symbols',
+      description:
+        'Fast symbol search across the workspace by name. ' +
+        'Faster than the find tool for simple name lookups. Supports fuzzy matching.',
+      inputSchema: TOOL_SCHEMAS.workspaceSymbolsParams,
+    },
 ] as const;
 
 /**
@@ -362,6 +362,9 @@ export const TOOL_DEFINITIONS = [
 export class ToolHandler {
   private languageService: TypeScriptLanguageService;
   private astFinder: AstFinder;
+  private requestQueue: Promise<unknown> = Promise.resolve();
+  private lastRefreshTime = 0;
+  private static REFRESH_INTERVAL_MS = 2000;
 
   constructor(languageService: TypeScriptLanguageService, astFinder: AstFinder) {
     this.languageService = languageService;
@@ -369,14 +372,80 @@ export class ToolHandler {
   }
 
   /**
+   * Validates that a file path is relative (not absolute) and exists in the project.
+   * Throws a descriptive error if not, guiding the agent to use valid paths.
+   */
+  private validateFilePath(file: string): void {
+    // Detect absolute paths (both Unix and Windows)
+    const isAbsolute = file.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(file);
+    if (isAbsolute) {
+      const projectFiles = this.languageService.getProjectFiles();
+      const sample = projectFiles.slice(0, 5).join(', ');
+      throw new Error(
+        `Absolute paths are not accepted. Use a relative path from the project root. ` +
+        `Example project files: ${sample}. ` +
+        `Use the "get_workspace_symbols" tool or "typescript://project/files" resource to discover files.`
+      );
+    }
+
+    // Check if the file exists in the project
+    if (!this.languageService.getFileContent(file)) {
+      const projectFiles = this.languageService.getProjectFiles();
+      // Try to find close matches
+      const needle = normalizePath(file).toLowerCase();
+      const suggestions = projectFiles
+        .filter(f => f.toLowerCase().includes(needle.split('/').pop() ?? ''))
+        .slice(0, 5);
+      const hint = suggestions.length > 0
+        ? ` Did you mean: ${suggestions.join(', ')}?`
+        : ` Example project files: ${projectFiles.slice(0, 5).join(', ')}.`;
+      throw new Error(
+        `File not found: "${file}".${hint} ` +
+        `Use the "get_workspace_symbols" tool or "typescript://project/files" resource to discover files.`
+      );
+    }
+  }
+
+  /**
    * Dispatches a tool call to the appropriate handler.
-   * Returns the result as a JSON-serializable object.
+   * Serializes concurrent requests via a queue to prevent race conditions
+   * on the shared TypeScript language service.
    */
   handleTool(
     name: string,
     args: Record<string, unknown>
+  ): Promise<{ content: Array<{ type: 'text'; text: string }>; isError?: boolean }> {
+    const task = this.requestQueue.then(() => this.executeToolCall(name, args));
+    // Update queue to wait for this task (swallow errors so the queue continues)
+    this.requestQueue = task.catch(() => {});
+    return task;
+  }
+
+  private executeToolCall(
+    name: string,
+    args: Record<string, unknown>
   ): { content: Array<{ type: 'text'; text: string }>; isError?: boolean } {
     try {
+      // Throttle file refresh to avoid re-walking the directory tree on every call
+      const now = Date.now();
+      if (now - this.lastRefreshTime >= ToolHandler.REFRESH_INTERVAL_MS) {
+        this.lastRefreshTime = now;
+        this.languageService.refreshChangedFiles();
+      }
+
+      // Validate file paths for tools that accept a file parameter
+      if (typeof args.file === 'string') {
+        this.validateFilePath(args.file);
+      }
+      // Validate file paths in batch_analyze positions
+      if (name === 'batch_analyze' && Array.isArray(args.positions)) {
+        for (const pos of args.positions) {
+          if (typeof pos === 'object' && pos !== null && typeof (pos as Record<string, unknown>).file === 'string') {
+            this.validateFilePath((pos as Record<string, unknown>).file as string);
+          }
+        }
+      }
+
       const result = this.dispatch(name, args);
       return {
         content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
@@ -385,7 +454,6 @@ export class ToolHandler {
       const message = error instanceof Error ? error.message : String(error);
       return {
         content: [{ type: 'text', text: `Error: ${message}` }],
-        isError: true,
       };
     }
   }

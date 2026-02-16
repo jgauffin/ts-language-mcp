@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll } from 'vitest';
+/// <reference types="vitest" />
 import * as path from 'path';
 import { TypeScriptLanguageService } from '../src/language-service.js';
 import { ResourceHandler, RESOURCE_URIS } from '../src/resources.js';

@@ -341,7 +341,7 @@ export class AstFinder {
     // Check if it's a regex pattern (starts and ends with /)
     if (pattern.startsWith('/') && pattern.endsWith('/')) {
       try {
-        const regex = new RegExp(pattern.slice(1, -1));
+        const regex = new RegExp(pattern.slice(1, -1), 'i');
         return regex.test(name);
       } catch {
         return false;
@@ -350,7 +350,7 @@ export class AstFinder {
 
     // Use glob matching for patterns with wildcards
     if (pattern.includes('*') || pattern.includes('?')) {
-      return minimatch(name, pattern, { nocase: false });
+      return minimatch(name, pattern, { nocase: true });
     }
 
     // Plain substring match

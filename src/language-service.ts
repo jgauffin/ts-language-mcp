@@ -36,7 +36,7 @@ import { normalizePath } from './tools.js';
  */
 export class TypeScriptLanguageService {
   private service: ts.LanguageService;
-  private files: Map<string, { content: string; version: number }> = new Map();
+  private files: Map<string, { content: string; version: number; mtime: number }> = new Map();
   private projectRoot: string;
   private compilerOptions: ts.CompilerOptions;
 
@@ -145,11 +145,13 @@ export class TypeScriptLanguageService {
     if (!fs.existsSync(absolutePath)) return;
 
     const content = fs.readFileSync(absolutePath, 'utf-8');
+    const mtime = fs.statSync(absolutePath).mtimeMs;
     const existing = this.files.get(absolutePath);
 
     this.files.set(absolutePath, {
       content,
       version: (existing?.version ?? 0) + 1,
+      mtime,
     });
   }
 
@@ -163,7 +165,69 @@ export class TypeScriptLanguageService {
     this.files.set(absolutePath, {
       content,
       version: (existing?.version ?? 0) + 1,
+      mtime: 0, // In-memory update, no disk mtime
     });
+  }
+
+  /**
+   * Re-reads any tracked files whose mtime has changed on disk.
+   * Also picks up new files and removes deleted ones.
+   */
+  refreshChangedFiles(): void {
+    // Remove deleted files (collect keys first to avoid mutating during iteration)
+    const trackedPaths = Array.from(this.files.keys());
+    for (const absolutePath of trackedPaths) {
+      try {
+        if (!fs.existsSync(absolutePath)) {
+          this.files.delete(absolutePath);
+        }
+      } catch {
+        // Permission error or inaccessible path — remove it
+        this.files.delete(absolutePath);
+      }
+    }
+
+    // Walk the project to find new files and check mtimes of existing ones
+    const extensions = ['.ts', '.tsx', '.js', '.jsx'];
+    this.refreshDirectory(this.projectRoot, extensions);
+  }
+
+  private refreshDirectory(dir: string, extensions: string[]): void {
+    const skipDirs = ['node_modules', 'dist', 'build', '.git', 'coverage'];
+
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      // Directory may have been deleted between existsSync check and readdir
+      return;
+    }
+
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+
+      if (entry.isDirectory()) {
+        if (!skipDirs.includes(entry.name)) {
+          this.refreshDirectory(fullPath, extensions);
+        }
+      } else if (extensions.some((ext) => entry.name.endsWith(ext))) {
+        try {
+          const existing = this.files.get(fullPath);
+          if (!existing) {
+            // New file
+            this.loadFile(fullPath);
+          } else {
+            const currentMtime = fs.statSync(fullPath).mtimeMs;
+            if (currentMtime !== existing.mtime) {
+              this.loadFile(fullPath);
+            }
+          }
+        } catch {
+          // File may have been deleted between readdir and stat/read
+          this.files.delete(fullPath);
+        }
+      }
+    }
   }
 
   /**

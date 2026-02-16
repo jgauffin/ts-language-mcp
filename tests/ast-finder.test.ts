@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll } from 'vitest';
+/// <reference types="vitest" />
 import * as path from 'path';
 import { TypeScriptLanguageService } from '../src/language-service.js';
 import { AstFinder } from '../src/ast-finder.js';
@@ -70,6 +70,15 @@ describe('AstFinder', () => {
   describe('find by query pattern', () => {
     it('should match glob pattern with *', () => {
       const results = finder.find({ query: '*Service' });
+
+      const names = results.map((r) => r.name);
+      expect(names).toContain('UserService');
+      expect(names).toContain('DefaultUserService');
+      expect(names).toContain('createUserService');
+    });
+
+    it('should match glob pattern case-insensitively', () => {
+      const results = finder.find({ query: '*SERVICE' });
 
       const names = results.map((r) => r.name);
       expect(names).toContain('UserService');

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll } from 'vitest';
+/// <reference types="vitest" />
 import * as path from 'path';
 import { TypeScriptLanguageService } from '../src/language-service.js';
 import { AstFinder } from '../src/ast-finder.js';
@@ -8,16 +8,18 @@ const FIXTURE_PATH = path.join(__dirname, 'fixtures', 'sample-project');
 
 describe('ToolHandler', () => {
   let handler: ToolHandler;
+  let service: TypeScriptLanguageService;
+  const toolDefinitions = TOOL_DEFINITIONS;
 
   beforeAll(() => {
-    const service = new TypeScriptLanguageService(FIXTURE_PATH);
+    service = new TypeScriptLanguageService(FIXTURE_PATH);
     const finder = new AstFinder(service);
     handler = new ToolHandler(service, finder);
   });
 
   describe('tool definitions', () => {
     it('should define all expected tools', () => {
-      const toolNames = TOOL_DEFINITIONS.map((t) => t.name);
+      const toolNames = toolDefinitions.map((t) => t.name);
 
       expect(toolNames).toContain('get_hover');
       expect(toolNames).toContain('get_definition');
@@ -38,14 +40,14 @@ describe('ToolHandler', () => {
     });
 
     it('should have descriptions for all tools', () => {
-      TOOL_DEFINITIONS.forEach((tool) => {
+      toolDefinitions.forEach((tool) => {
         expect(tool.description).toBeDefined();
         expect(tool.description.length).toBeGreaterThan(10);
       });
     });
 
     it('should have input schemas for all tools', () => {
-      TOOL_DEFINITIONS.forEach((tool) => {
+      toolDefinitions.forEach((tool) => {
         expect(tool.inputSchema).toBeDefined();
         expect(tool.inputSchema.type).toBe('object');
       });
@@ -53,8 +55,8 @@ describe('ToolHandler', () => {
   });
 
   describe('get_hover', () => {
-    it('should return hover content', () => {
-      const result = handler.handleTool('get_hover', {
+    it('should return hover content', async () => {
+      const result = await handler.handleTool('get_hover', {
         file: 'src/services/user-service.ts',
         line: 4,
         column: 18,
@@ -69,8 +71,8 @@ describe('ToolHandler', () => {
   });
 
   describe('get_definition', () => {
-    it('should return definition location', () => {
-      const result = handler.handleTool('get_definition', {
+    it('should return definition location', async () => {
+      const result = await handler.handleTool('get_definition', {
         file: 'src/services/user-service.ts',
         line: 5,
         column: 32,
@@ -84,8 +86,8 @@ describe('ToolHandler', () => {
   });
 
   describe('get_references', () => {
-    it('should return reference locations', () => {
-      const result = handler.handleTool('get_references', {
+    it('should return reference locations', async () => {
+      const result = await handler.handleTool('get_references', {
         file: 'src/services/user-service.ts',
         line: 13,
         column: 18,
@@ -97,9 +99,9 @@ describe('ToolHandler', () => {
       expect(Array.isArray(parsed.references)).toBe(true);
     });
 
-    it('should include reference kind for each reference', () => {
+    it('should include reference kind for each reference', async () => {
       // Get references to UserService interface (line 4)
-      const result = handler.handleTool('get_references', {
+      const result = await handler.handleTool('get_references', {
         file: 'src/services/user-service.ts',
         line: 4,
         column: 18,
@@ -119,8 +121,8 @@ describe('ToolHandler', () => {
   });
 
   describe('get_diagnostics', () => {
-    it('should return diagnostics array', () => {
-      const result = handler.handleTool('get_diagnostics', {
+    it('should return diagnostics array', async () => {
+      const result = await handler.handleTool('get_diagnostics', {
         file: 'src/services/user-service.ts',
       });
 
@@ -132,8 +134,8 @@ describe('ToolHandler', () => {
   });
 
   describe('get_symbols', () => {
-    it('should return symbols array', () => {
-      const result = handler.handleTool('get_symbols', {
+    it('should return symbols array', async () => {
+      const result = await handler.handleTool('get_symbols', {
         file: 'src/services/user-service.ts',
       });
 
@@ -146,8 +148,8 @@ describe('ToolHandler', () => {
   });
 
   describe('get_completions', () => {
-    it('should return completions array', () => {
-      const result = handler.handleTool('get_completions', {
+    it('should return completions array', async () => {
+      const result = await handler.handleTool('get_completions', {
         file: 'src/services/user-service.ts',
         line: 50,
         column: 10,
@@ -161,8 +163,8 @@ describe('ToolHandler', () => {
   });
 
   describe('get_signature', () => {
-    it('should return signature or null', () => {
-      const result = handler.handleTool('get_signature', {
+    it('should return signature or null', async () => {
+      const result = await handler.handleTool('get_signature', {
         file: 'src/services/user-service.ts',
         line: 10,
         column: 10,
@@ -178,8 +180,8 @@ describe('ToolHandler', () => {
   });
 
   describe('analyze_position', () => {
-    it('should return combined analysis', () => {
-      const result = handler.handleTool('analyze_position', {
+    it('should return combined analysis', async () => {
+      const result = await handler.handleTool('analyze_position', {
         file: 'src/services/user-service.ts',
         line: 4,
         column: 18,
@@ -195,8 +197,8 @@ describe('ToolHandler', () => {
   });
 
   describe('find', () => {
-    it('should return matches with count', () => {
-      const result = handler.handleTool('find', {
+    it('should return matches with count', async () => {
+      const result = await handler.handleTool('find', {
         kinds: ['interface'],
       });
 
@@ -208,8 +210,8 @@ describe('ToolHandler', () => {
       expect(parsed.count).toBe(parsed.matches.length);
     });
 
-    it('should support all find parameters', () => {
-      const result = handler.handleTool('find', {
+    it('should support all find parameters', async () => {
+      const result = await handler.handleTool('find', {
         query: '*Service',
         kinds: ['interface'],
         scope: 'project',
@@ -223,8 +225,8 @@ describe('ToolHandler', () => {
       expect(parsed.matches[0].name).toContain('Service');
     });
 
-    it('should find string literals', () => {
-      const result = handler.handleTool('find', {
+    it('should find string literals', async () => {
+      const result = await handler.handleTool('find', {
         kinds: ['string'],
         scope: 'file',
         path: 'src/services/user-service.ts',
@@ -239,8 +241,8 @@ describe('ToolHandler', () => {
       expect(parsed.matches.every((m: { kind: string }) => m.kind === 'string')).toBe(true);
     });
 
-    it('should find comments', () => {
-      const result = handler.handleTool('find', {
+    it('should find comments', async () => {
+      const result = await handler.handleTool('find', {
         kinds: ['comment'],
         scope: 'file',
         path: 'src/services/user-service.ts',
@@ -255,8 +257,8 @@ describe('ToolHandler', () => {
       expect(parsed.matches.every((m: { kind: string }) => m.kind === 'comment')).toBe(true);
     });
 
-    it('should find comments matching a query pattern', () => {
-      const result = handler.handleTool('find', {
+    it('should find comments matching a query pattern', async () => {
+      const result = await handler.handleTool('find', {
         query: 'User',
         kinds: ['comment'],
         scope: 'file',
@@ -273,9 +275,9 @@ describe('ToolHandler', () => {
   });
 
   describe('get_implementations', () => {
-    it('should find implementations of an interface', () => {
+    it('should find implementations of an interface', async () => {
       // UserService interface at line 4
-      const result = handler.handleTool('get_implementations', {
+      const result = await handler.handleTool('get_implementations', {
         file: 'src/services/user-service.ts',
         line: 4,
         column: 18,
@@ -288,8 +290,8 @@ describe('ToolHandler', () => {
       expect(typeof parsed.count).toBe('number');
     });
 
-    it('should return empty array for non-interface', () => {
-      const result = handler.handleTool('get_implementations', {
+    it('should return empty array for non-interface', async () => {
+      const result = await handler.handleTool('get_implementations', {
         file: 'src/services/user-service.ts',
         line: 94,
         column: 14,
@@ -303,8 +305,8 @@ describe('ToolHandler', () => {
   });
 
   describe('get_imports', () => {
-    it('should return imports from a file', () => {
-      const result = handler.handleTool('get_imports', {
+    it('should return imports from a file', async () => {
+      const result = await handler.handleTool('get_imports', {
         file: 'src/handlers.ts',
       });
 
@@ -322,8 +324,8 @@ describe('ToolHandler', () => {
       expect(typeof firstImport.line).toBe('number');
     });
 
-    it('should include named imports', () => {
-      const result = handler.handleTool('get_imports', {
+    it('should include named imports', async () => {
+      const result = await handler.handleTool('get_imports', {
         file: 'src/handlers.ts',
       });
 
@@ -335,8 +337,8 @@ describe('ToolHandler', () => {
       expect(importWithNamed.namedImports).toContain('UserService');
     });
 
-    it('should return empty array for file without imports', () => {
-      const result = handler.handleTool('get_imports', {
+    it('should return empty array for file without imports', async () => {
+      const result = await handler.handleTool('get_imports', {
         file: 'src/services/user-service.ts',
       });
 
@@ -348,8 +350,8 @@ describe('ToolHandler', () => {
   });
 
   describe('get_outline', () => {
-    it('should return hierarchical structure', () => {
-      const result = handler.handleTool('get_outline', {
+    it('should return hierarchical structure', async () => {
+      const result = await handler.handleTool('get_outline', {
         file: 'src/services/user-service.ts',
       });
 
@@ -360,8 +362,8 @@ describe('ToolHandler', () => {
       expect(parsed.outline.length).toBeGreaterThan(0);
     });
 
-    it('should include position information', () => {
-      const result = handler.handleTool('get_outline', {
+    it('should include position information', async () => {
+      const result = await handler.handleTool('get_outline', {
         file: 'src/services/user-service.ts',
       });
 
@@ -376,8 +378,8 @@ describe('ToolHandler', () => {
       expect(typeof item.endColumn).toBe('number');
     });
 
-    it('should include nested children for classes', () => {
-      const result = handler.handleTool('get_outline', {
+    it('should include nested children for classes', async () => {
+      const result = await handler.handleTool('get_outline', {
         file: 'src/services/user-service.ts',
       });
 
@@ -394,9 +396,9 @@ describe('ToolHandler', () => {
   });
 
   describe('rename_preview', () => {
-    it('should return locations for renaming', () => {
+    it('should return locations for renaming', async () => {
       // Rename the User interface
-      const result = handler.handleTool('rename_preview', {
+      const result = await handler.handleTool('rename_preview', {
         file: 'src/services/user-service.ts',
         line: 13,
         column: 18,
@@ -410,8 +412,8 @@ describe('ToolHandler', () => {
       expect(typeof parsed.count).toBe('number');
     });
 
-    it('should include original and new text', () => {
-      const result = handler.handleTool('rename_preview', {
+    it('should include original and new text', async () => {
+      const result = await handler.handleTool('rename_preview', {
         file: 'src/services/user-service.ts',
         line: 13,
         column: 18,
@@ -430,9 +432,9 @@ describe('ToolHandler', () => {
   });
 
   describe('get_call_hierarchy', () => {
-    it('should return incoming calls', () => {
+    it('should return incoming calls', async () => {
       // validateEmail function at line 45
-      const result = handler.handleTool('get_call_hierarchy', {
+      const result = await handler.handleTool('get_call_hierarchy', {
         file: 'src/services/user-service.ts',
         line: 45,
         column: 10,
@@ -446,9 +448,9 @@ describe('ToolHandler', () => {
       expect(typeof parsed.count).toBe('number');
     });
 
-    it('should return outgoing calls', () => {
+    it('should return outgoing calls', async () => {
       // createUser method calls validateEmail
-      const result = handler.handleTool('get_call_hierarchy', {
+      const result = await handler.handleTool('get_call_hierarchy', {
         file: 'src/services/user-service.ts',
         line: 63,
         column: 9,
@@ -462,8 +464,8 @@ describe('ToolHandler', () => {
       expect(typeof parsed.count).toBe('number');
     });
 
-    it('should include call location info', () => {
-      const result = handler.handleTool('get_call_hierarchy', {
+    it('should include call location info', async () => {
+      const result = await handler.handleTool('get_call_hierarchy', {
         file: 'src/services/user-service.ts',
         line: 45,
         column: 10,
@@ -480,9 +482,9 @@ describe('ToolHandler', () => {
   });
 
   describe('get_type_hierarchy', () => {
-    it('should return supertypes', () => {
+    it('should return supertypes', async () => {
       // DefaultUserService class at line 52
-      const result = handler.handleTool('get_type_hierarchy', {
+      const result = await handler.handleTool('get_type_hierarchy', {
         file: 'src/services/user-service.ts',
         line: 52,
         column: 14,
@@ -496,9 +498,9 @@ describe('ToolHandler', () => {
       expect(typeof parsed.count).toBe('number');
     });
 
-    it('should return subtypes', () => {
+    it('should return subtypes', async () => {
       // UserService interface at line 4
-      const result = handler.handleTool('get_type_hierarchy', {
+      const result = await handler.handleTool('get_type_hierarchy', {
         file: 'src/services/user-service.ts',
         line: 4,
         column: 18,
@@ -512,8 +514,8 @@ describe('ToolHandler', () => {
       expect(typeof parsed.count).toBe('number');
     });
 
-    it('should include type info', () => {
-      const result = handler.handleTool('get_type_hierarchy', {
+    it('should include type info', async () => {
+      const result = await handler.handleTool('get_type_hierarchy', {
         file: 'src/services/user-service.ts',
         line: 52,
         column: 14,
@@ -532,8 +534,8 @@ describe('ToolHandler', () => {
   });
 
   describe('batch_analyze', () => {
-    it('should analyze multiple positions', () => {
-      const result = handler.handleTool('batch_analyze', {
+    it('should analyze multiple positions', async () => {
+      const result = await handler.handleTool('batch_analyze', {
         positions: [
           { file: 'src/services/user-service.ts', line: 4, column: 18 },
           { file: 'src/services/user-service.ts', line: 13, column: 18 },
@@ -548,8 +550,8 @@ describe('ToolHandler', () => {
       expect(parsed.count).toBe(2);
     });
 
-    it('should include all analyses by default', () => {
-      const result = handler.handleTool('batch_analyze', {
+    it('should include all analyses by default', async () => {
+      const result = await handler.handleTool('batch_analyze', {
         positions: [{ file: 'src/services/user-service.ts', line: 4, column: 18 }],
       });
 
@@ -566,8 +568,8 @@ describe('ToolHandler', () => {
       expect('signature' in analysis).toBe(true);
     });
 
-    it('should support selective analysis with include', () => {
-      const result = handler.handleTool('batch_analyze', {
+    it('should support selective analysis with include', async () => {
+      const result = await handler.handleTool('batch_analyze', {
         positions: [{ file: 'src/services/user-service.ts', line: 4, column: 18 }],
         include: ['hover', 'definition'],
       });
@@ -584,15 +586,15 @@ describe('ToolHandler', () => {
   });
 
   describe('error handling', () => {
-    it('should return error for unknown tool', () => {
-      const result = handler.handleTool('unknown_tool', {});
+    it('should return error for unknown tool', async () => {
+      const result = await handler.handleTool('unknown_tool', {});
 
-      expect(result.isError).toBe(true);
+      expect(result.isError).toBeUndefined();
       expect(result.content[0].text).toContain('Unknown tool');
     });
 
-    it('should handle missing file gracefully', () => {
-      const result = handler.handleTool('get_diagnostics', {
+    it('should handle missing file gracefully', async () => {
+      const result = await handler.handleTool('get_diagnostics', {
         file: 'non-existent-file.ts',
       });
 
@@ -602,8 +604,8 @@ describe('ToolHandler', () => {
   });
 
   describe('response format', () => {
-    it('should always return content array', () => {
-      const result = handler.handleTool('get_symbols', {
+    it('should always return content array', async () => {
+      const result = await handler.handleTool('get_symbols', {
         file: 'src/services/user-service.ts',
       });
 
@@ -611,20 +613,90 @@ describe('ToolHandler', () => {
       expect(result.content.length).toBe(1);
     });
 
-    it('should return text type content', () => {
-      const result = handler.handleTool('get_symbols', {
+    it('should return text type content', async () => {
+      const result = await handler.handleTool('get_symbols', {
         file: 'src/services/user-service.ts',
       });
 
       expect(result.content[0].type).toBe('text');
     });
 
-    it('should return valid JSON in text', () => {
-      const result = handler.handleTool('get_symbols', {
+    it('should return valid JSON in text', async () => {
+      const result = await handler.handleTool('get_symbols', {
         file: 'src/services/user-service.ts',
       });
 
       expect(() => JSON.parse(result.content[0].text)).not.toThrow();
+    });
+  });
+
+  describe('request serialization', () => {
+    it('should serialize concurrent tool calls via the queue', async () => {
+      const executionOrder: number[] = [];
+      const originalRefresh = service.refreshChangedFiles.bind(service);
+
+      // Spy on refreshChangedFiles to track execution order
+      let callIndex = 0;
+      vi.spyOn(service, 'refreshChangedFiles').mockImplementation(() => {
+        executionOrder.push(++callIndex);
+        originalRefresh();
+      });
+
+      // Fire multiple tool calls concurrently
+      const promises = [
+        handler.handleTool('get_symbols', { file: 'src/services/user-service.ts' }),
+        handler.handleTool('get_symbols', { file: 'src/services/user-service.ts' }),
+        handler.handleTool('get_symbols', { file: 'src/services/user-service.ts' }),
+      ];
+
+      const results = await Promise.all(promises);
+
+      // All should succeed (no sibling errors)
+      for (const result of results) {
+        expect(result.isError).toBeUndefined();
+      }
+
+      // Execution order should be sequential (1, 2, 3) not interleaved
+      for (let i = 1; i < executionOrder.length; i++) {
+        expect(executionOrder[i]).toBe(executionOrder[i - 1] + 1);
+      }
+
+      vi.restoreAllMocks();
+    });
+
+    it('should not block the queue when one call returns an error', async () => {
+      // First call will error (unknown tool), second should still succeed
+      const [errorResult, successResult] = await Promise.all([
+        handler.handleTool('unknown_tool', {}),
+        handler.handleTool('get_symbols', { file: 'src/services/user-service.ts' }),
+      ]);
+
+      expect(errorResult.isError).toBeUndefined();
+      expect(successResult.isError).toBeUndefined();
+
+      const parsed = JSON.parse(successResult.content[0].text);
+      expect(Array.isArray(parsed.symbols)).toBe(true);
+    });
+  });
+
+  describe('refresh throttling', () => {
+    it('should not call refreshChangedFiles on every request within throttle window', async () => {
+      const spy = vi.spyOn(service, 'refreshChangedFiles');
+      spy.mockClear();
+
+      // Reset the internal lastRefreshTime by doing one call first
+      // (this primes the throttle timer)
+      await handler.handleTool('get_symbols', { file: 'src/services/user-service.ts' });
+      const countAfterFirst = spy.mock.calls.length;
+
+      // Immediately fire more calls (within the 2s throttle window)
+      await handler.handleTool('get_symbols', { file: 'src/services/user-service.ts' });
+      await handler.handleTool('get_symbols', { file: 'src/services/user-service.ts' });
+
+      // refreshChangedFiles should NOT have been called again (throttled)
+      expect(spy.mock.calls.length).toBe(countAfterFirst);
+
+      vi.restoreAllMocks();
     });
   });
 });
