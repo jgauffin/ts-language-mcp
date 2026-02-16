@@ -37,7 +37,7 @@ export function createServer(projectRoot?: string, options?: ServerOptions): Mcp
   const resourceHandler = new ResourceHandler(languageService);
   const serverInfo = {
     name: options?.name ?? 'ts-language-mcp',
-    version: '1.0.0',
+    version: '1.1.0',
     ...(options?.description ? { description: options.description } : {}),
   };
 

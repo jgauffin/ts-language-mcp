@@ -1,6 +1,6 @@
 {
   "name": "ts-language-mcp",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "TypeScript Language Server exposed via MCP for AI agents",
   "author": "jgauffin",
   "license": "MIT",
@@ -44,6 +44,11 @@
     "vite-tsconfig-paths": "^6.0.4",
     "vitest": "^4.0.18"
   },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "engines": {
     "node": ">=18.0.0"
   }
