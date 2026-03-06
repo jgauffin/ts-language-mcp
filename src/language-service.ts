@@ -41,33 +41,51 @@ export class TypeScriptLanguageService {
   private compilerOptions: ts.CompilerOptions;
 
   constructor(projectRoot: string) {
-    this.projectRoot = path.resolve(projectRoot);
+    this.projectRoot = path.resolve(projectRoot).replace(/[\\\/]+$/, '');
     this.compilerOptions = this.loadCompilerOptions();
     this.service = this.createLanguageService();
     this.indexProjectFiles();
   }
 
   /**
-   * Loads tsconfig.json or falls back to sensible defaults.
+   * Loads tsconfig.json from the project root, or falls back to sensible defaults.
+   * Only checks the project root directory — does NOT walk up to parent directories.
    */
   private loadCompilerOptions(): ts.CompilerOptions {
-    const configPath = ts.findConfigFile(this.projectRoot, ts.sys.fileExists);
+    const configPath = path.join(this.projectRoot, 'tsconfig.json');
 
-    if (configPath) {
+    if (fs.existsSync(configPath)) {
       const configFile = ts.readConfigFile(configPath, ts.sys.readFile);
+      if (configFile.error) {
+        console.error(
+          `Warning: failed to read tsconfig.json: ${ts.flattenDiagnosticMessageText(configFile.error.messageText, '\n')}`
+        );
+        return this.defaultCompilerOptions();
+      }
+
       const parsed = ts.parseJsonConfigFileContent(
         configFile.config,
         ts.sys,
         this.projectRoot
       );
+      if (parsed.errors.length > 0) {
+        for (const err of parsed.errors) {
+          console.error(
+            `Warning: tsconfig.json: ${ts.flattenDiagnosticMessageText(err.messageText, '\n')}`
+          );
+        }
+      }
       return parsed.options;
     }
 
-    // Defaults when no tsconfig exists
+    return this.defaultCompilerOptions();
+  }
+
+  private defaultCompilerOptions(): ts.CompilerOptions {
     return {
       target: ts.ScriptTarget.ES2022,
-      module: ts.ModuleKind.NodeNext,
-      moduleResolution: ts.ModuleResolutionKind.NodeNext,
+      module: ts.ModuleKind.ESNext,
+      moduleResolution: ts.ModuleResolutionKind.Bundler,
       strict: true,
       esModuleInterop: true,
       allowJs: true,
@@ -117,8 +135,8 @@ export class TypeScriptLanguageService {
   }
 
   private walkDirectory(dir: string, extensions: string[]): void {
-    // Skip common non-source directories
-    const skipDirs = ['node_modules', 'dist', 'build', '.git', 'coverage'];
+    // Skip common non-source directories and hidden directories (starting with '.')
+    const skipDirs = ['node_modules', 'dist', 'build', 'coverage'];
 
     if (!fs.existsSync(dir)) return;
 
@@ -128,7 +146,7 @@ export class TypeScriptLanguageService {
       const fullPath = path.join(dir, entry.name);
 
       if (entry.isDirectory()) {
-        if (!skipDirs.includes(entry.name)) {
+        if (!skipDirs.includes(entry.name) && !entry.name.startsWith('.')) {
           this.walkDirectory(fullPath, extensions);
         }
       } else if (extensions.some((ext) => entry.name.endsWith(ext))) {

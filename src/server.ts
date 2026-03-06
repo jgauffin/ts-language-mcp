@@ -37,14 +37,16 @@ export function createServer(projectRoot?: string, options?: ServerOptions): Mcp
   const resourceHandler = new ResourceHandler(languageService);
   const serverInfo = {
     name: options?.name ?? 'ts-language-mcp',
-    version: '1.1.0',
+    version: '1.0.0',
     ...(options?.description ? { description: options.description } : {}),
   };
 
   const instructions =
-    `This server provides TypeScript/JavaScript language intelligence for the project at: ${normalizedRoot}\n` +
+    `This server provides TypeScript and JavaScript language intelligence for the project at: ${normalizedRoot}\n` +
+    `Supported file types: .ts, .tsx, .js, .jsx\n` +
     `All "file" parameters must be relative paths from this project root, using forward slashes.\n` +
-    `Example: "src/index.ts", "tests/utils.test.ts"\n` +
+    `Reading "node_modules" is not supported. Hidden directories (starting with .) are automatically skipped.\n` +
+    `Example: "src/index.ts", "src/utils.js", "tests/utils.test.ts"\n` +
     `Do NOT use absolute paths. Use the "get_workspace_symbols" tool or the "typescript://project/files" resource to discover available file paths.`;
 
   const mcpServer = new McpServer(serverInfo, {

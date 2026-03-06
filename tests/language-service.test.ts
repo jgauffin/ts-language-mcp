@@ -11,6 +11,23 @@ describe('TypeScriptLanguageService', () => {
     service = new TypeScriptLanguageService(FIXTURE_PATH);
   });
 
+  describe('constructor', () => {
+    it('should normalize project root path (remove trailing slashes)', () => {
+      // Create services with various trailing slash patterns
+      const withoutSlash = new TypeScriptLanguageService(FIXTURE_PATH);
+      const withSlash = new TypeScriptLanguageService(FIXTURE_PATH + '/');
+      const withBackslash = new TypeScriptLanguageService(FIXTURE_PATH + '\\');
+
+      // All should return the same files
+      const files1 = withoutSlash.getProjectFiles();
+      const files2 = withSlash.getProjectFiles();
+      const files3 = withBackslash.getProjectFiles();
+
+      expect(files1).toEqual(files2);
+      expect(files1).toEqual(files3);
+    });
+  });
+
   describe('getProjectFiles', () => {
     it('should index TypeScript files in project', () => {
       const files = service.getProjectFiles();
@@ -24,6 +41,17 @@ describe('TypeScriptLanguageService', () => {
       const hasNodeModules = files.some((f) => f.includes('node_modules'));
 
       expect(hasNodeModules).toBe(false);
+    });
+
+    it('should skip hidden directories (starting with .)', () => {
+      const files = service.getProjectFiles();
+
+      // Hidden directories like .angular, .git, .next should be skipped
+      const hasHiddenDir = files.some((f) => 
+        f.includes('/.') || f.includes('\\.') || f.split(/[\\/]/).some(part => part.startsWith('.') && part !== '.')
+      );
+
+      expect(hasHiddenDir).toBe(false);
     });
   });
 
