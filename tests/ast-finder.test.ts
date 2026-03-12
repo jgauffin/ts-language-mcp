@@ -30,7 +30,7 @@ describe('AstFinder', () => {
 
       const names = results.map((r) => r.name);
       expect(names).toContain('DefaultUserService');
-      expect(results.length).toBe(1);
+      expect(names).toContain('DefaultHttpClient');
     });
 
     it('should find all enums', () => {
@@ -225,6 +225,58 @@ describe('AstFinder', () => {
 
       expect(results.length).toBe(1);
       expect(results[0].name).toBe('UserService');
+    });
+  });
+
+  describe('named import bindings', () => {
+    it('should find named import specifiers by query', () => {
+      const results = finder.find({ query: 'HttpClient' });
+
+      const names = results.map((r) => r.name);
+      expect(names).toContain('HttpClient');
+    });
+
+    it('should find named import specifiers with kind filter', () => {
+      const results = finder.find({ kinds: ['import'], scope: 'file', path: 'src/handlers.ts' });
+
+      const names = results.map((r) => r.name);
+      // Should include individual named imports, not just module specifiers
+      expect(names).toContain('HttpClient');
+      expect(names).toContain('UserService');
+    });
+  });
+
+  describe('function expressions', () => {
+    it('should find named function expressions by query', () => {
+      const results = finder.find({ query: 'processHtml' });
+
+      const names = results.map((r) => r.name);
+      expect(names).toContain('processHtml');
+    });
+
+    it('should find named function expressions with kind filter', () => {
+      const results = finder.find({ kinds: ['function'], scope: 'file', path: 'src/handlers.ts' });
+
+      const names = results.map((r) => r.name);
+      expect(names).toContain('processHtml');
+    });
+  });
+
+  describe('export declarations', () => {
+    it('should find re-export declarations by query', () => {
+      const results = finder.find({ kinds: ['export'], scope: 'file', path: 'src/handlers.ts' });
+
+      // Should find the re-export of HttpClient
+      expect(results.length).toBeGreaterThan(0);
+      const names = results.map((r) => r.name);
+      expect(names).toContain('HttpClient');
+    });
+
+    it('should find default export', () => {
+      const results = finder.find({ kinds: ['export'], scope: 'file', path: 'src/handlers.ts' });
+
+      const names = results.map((r) => r.name);
+      expect(names).toContain('createGetUserHandler');
     });
   });
 

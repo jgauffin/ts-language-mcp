@@ -1,4 +1,5 @@
 import { UserService, User, CreateUserDto } from './services/user-service.js';
+import { HttpClient } from './http-client.js';
 
 /**
  * HTTP request handler type.
@@ -50,3 +51,20 @@ export function createPostUserHandler(ctx: HandlerContext): RequestHandler {
 export const healthHandler: RequestHandler = async () => {
   return new Response('OK');
 };
+
+/**
+ * Named function expression.
+ */
+const processHtml = function processHtml(input: string): string {
+  return input.trim();
+};
+
+/**
+ * Re-export from another module.
+ */
+export { HttpClient } from './http-client.js';
+
+/**
+ * Default export.
+ */
+export default createGetUserHandler;

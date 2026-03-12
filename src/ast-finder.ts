@@ -224,7 +224,13 @@ export class AstFinder {
     if (ts.isImportDeclaration(node)) {
       return 'import';
     }
+    if (ts.isImportSpecifier(node)) {
+      return 'import';
+    }
     if (ts.isExportDeclaration(node) || ts.isExportAssignment(node)) {
+      return 'export';
+    }
+    if (ts.isExportSpecifier(node)) {
       return 'export';
     }
     if (
@@ -270,6 +276,7 @@ export class AstFinder {
   private getNodeName(node: ts.Node): string | undefined {
     if (
       ts.isFunctionDeclaration(node) ||
+      ts.isFunctionExpression(node) ||
       ts.isClassDeclaration(node) ||
       ts.isInterfaceDeclaration(node) ||
       ts.isTypeAliasDeclaration(node) ||
@@ -295,6 +302,34 @@ export class AstFinder {
     if (ts.isImportDeclaration(node)) {
       // Return module specifier for imports
       return node.moduleSpecifier.getText().replace(/['"]/g, '');
+    }
+
+    if (ts.isImportSpecifier(node)) {
+      // Return the local binding name (e.g., "HttpClient" from `import { HttpClient } from '...'`)
+      return node.name.getText();
+    }
+
+    if (ts.isExportDeclaration(node)) {
+      // For re-exports like `export { Foo } from './bar'`, return named exports
+      if (node.exportClause && ts.isNamedExports(node.exportClause)) {
+        // Handled by ExportSpecifier children
+        return undefined;
+      }
+      // For `export * from './bar'`, return module specifier
+      return node.moduleSpecifier?.getText().replace(/['"]/g, '');
+    }
+
+    if (ts.isExportSpecifier(node)) {
+      // Return the exported name (e.g., "HttpClient" from `export { HttpClient }`)
+      return (node.propertyName ?? node.name).getText();
+    }
+
+    if (ts.isExportAssignment(node)) {
+      // `export default X` — return the expression name if it's an identifier
+      if (ts.isIdentifier(node.expression)) {
+        return node.expression.getText();
+      }
+      return 'default';
     }
 
     if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {

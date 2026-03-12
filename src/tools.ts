@@ -617,8 +617,8 @@ export class ToolHandler {
   }
 
   private getOutline(params: { file: string }) {
-    const result = this.languageService.getOutline(params.file);
-    return { outline: result };
+    const items = this.languageService.getOutline(params.file);
+    return { outline: items };
   }
 
   private renamePreview(params: PositionParams & { newName: string }) {
