@@ -14,7 +14,6 @@ import type {
   ImportInfo,
   OutlineItem,
   RenameLocation,
-  CallHierarchyItem,
   CallHierarchyCall,
   TypeHierarchyItem,
   RenameResult,
@@ -22,29 +21,32 @@ import type {
   FormatOptions,
   FormatResult,
   WorkspaceSymbol,
+  ProjectContext,
 } from './types.js';
 import { normalizePath } from './tools.js';
+import { FileManager } from './file-manager.js';
+import { getOffset, getLineColumn } from './position-utils.js';
 
 /**
  * Wraps TypeScript's Language Service to provide code intelligence.
- * Manages file state, project configuration, and translates TS APIs
- * into simpler structures for MCP consumption.
+ * Delegates file management to FileManager and implements ProjectContext
+ * so analyzers can depend on the minimal interface.
  *
  * @example
  * const service = new TypeScriptLanguageService('/path/to/project');
  * const hover = service.getHover('src/index.ts', 10, 5);
  */
-export class TypeScriptLanguageService {
+export class TypeScriptLanguageService implements ProjectContext {
   private service: ts.LanguageService;
-  private files: Map<string, { content: string; version: number; mtime: number }> = new Map();
+  private fileManager: FileManager;
   private projectRoot: string;
   private compilerOptions: ts.CompilerOptions;
 
   constructor(projectRoot: string) {
     this.projectRoot = path.resolve(projectRoot).replace(/[\\\/]+$/, '');
     this.compilerOptions = this.loadCompilerOptions();
+    this.fileManager = new FileManager(this.projectRoot);
     this.service = this.createLanguageService();
-    this.indexProjectFiles();
   }
 
   /**
@@ -99,17 +101,12 @@ export class TypeScriptLanguageService {
    */
   private createLanguageService(): ts.LanguageService {
     const host: ts.LanguageServiceHost = {
-      getScriptFileNames: () => Array.from(this.files.keys()),
-      getScriptVersion: (fileName) =>
-        this.files.get(fileName)?.version.toString() ?? '0',
+      getScriptFileNames: () => this.fileManager.getAbsolutePaths(),
+      getScriptVersion: (fileName) => this.fileManager.getScriptVersion(fileName),
       getScriptSnapshot: (fileName) => {
-        const file = this.files.get(fileName);
-        if (file) {
-          return ts.ScriptSnapshot.fromString(file.content);
-        }
-        // Fallback to disk for files not yet loaded (e.g., node_modules)
-        if (fs.existsSync(fileName)) {
-          return ts.ScriptSnapshot.fromString(fs.readFileSync(fileName, 'utf-8'));
+        const content = this.fileManager.getScriptSnapshot(fileName);
+        if (content !== undefined) {
+          return ts.ScriptSnapshot.fromString(content);
         }
         return undefined;
       },
@@ -127,176 +124,74 @@ export class TypeScriptLanguageService {
   }
 
   /**
-   * Indexes all TS/JS files in the project for analysis.
+   * Resolves a file path and returns its content, or undefined.
    */
-  private indexProjectFiles(): void {
-    const extensions = ['.ts', '.tsx', '.js', '.jsx'];
-    this.walkDirectory(this.projectRoot, extensions);
-  }
-
-  private walkDirectory(dir: string, extensions: string[]): void {
-    // Skip common non-source directories and hidden directories (starting with '.')
-    const skipDirs = ['node_modules', 'dist', 'build', 'coverage'];
-
-    if (!fs.existsSync(dir)) return;
-
-    const entries = fs.readdirSync(dir, { withFileTypes: true });
-
-    for (const entry of entries) {
-      const fullPath = path.join(dir, entry.name);
-
-      if (entry.isDirectory()) {
-        if (!skipDirs.includes(entry.name) && !entry.name.startsWith('.')) {
-          this.walkDirectory(fullPath, extensions);
-        }
-      } else if (extensions.some((ext) => entry.name.endsWith(ext))) {
-        this.loadFile(fullPath);
-      }
-    }
+  private getContentForPath(filePath: string): string | undefined {
+    const absolutePath = path.resolve(this.projectRoot, filePath);
+    return this.fileManager.getFileEntry(absolutePath)?.content;
   }
 
   /**
-   * Loads a file into the service. Call when file content changes.
+   * Converts 1-based line/column to 0-based offset for a project file.
    */
+  private toOffset(filePath: string, line: number, column: number): number {
+    const content = this.getContentForPath(filePath);
+    if (!content) return 0;
+    return getOffset(content, line, column);
+  }
+
+  /**
+   * Converts 0-based offset to 1-based line/column for a project file.
+   */
+  private toLineColumn(filePath: string, offset: number): { line: number; column: number } {
+    const content = this.getContentForPath(filePath);
+    if (!content) return { line: 1, column: 1 };
+    return getLineColumn(content, offset);
+  }
+
+  // ── Delegated file management ──
+
   loadFile(filePath: string): void {
-    const absolutePath = path.resolve(this.projectRoot, filePath);
-    if (!fs.existsSync(absolutePath)) return;
-
-    const content = fs.readFileSync(absolutePath, 'utf-8');
-    const mtime = fs.statSync(absolutePath).mtimeMs;
-    const existing = this.files.get(absolutePath);
-
-    this.files.set(absolutePath, {
-      content,
-      version: (existing?.version ?? 0) + 1,
-      mtime,
-    });
+    this.fileManager.loadFile(filePath);
   }
 
-  /**
-   * Updates file content without disk I/O. Useful for unsaved changes.
-   */
   updateFile(filePath: string, content: string): void {
-    const absolutePath = path.resolve(this.projectRoot, filePath);
-    const existing = this.files.get(absolutePath);
-
-    this.files.set(absolutePath, {
-      content,
-      version: (existing?.version ?? 0) + 1,
-      mtime: 0, // In-memory update, no disk mtime
-    });
+    this.fileManager.updateFile(filePath, content);
   }
 
-  /**
-   * Re-reads any tracked files whose mtime has changed on disk.
-   * Also picks up new files and removes deleted ones.
-   */
   refreshChangedFiles(): void {
-    // Remove deleted files (collect keys first to avoid mutating during iteration)
-    const trackedPaths = Array.from(this.files.keys());
-    for (const absolutePath of trackedPaths) {
-      try {
-        if (!fs.existsSync(absolutePath)) {
-          this.files.delete(absolutePath);
-        }
-      } catch {
-        // Permission error or inaccessible path — remove it
-        this.files.delete(absolutePath);
-      }
-    }
-
-    // Walk the project to find new files and check mtimes of existing ones
-    const extensions = ['.ts', '.tsx', '.js', '.jsx'];
-    this.refreshDirectory(this.projectRoot, extensions);
+    this.fileManager.refreshChangedFiles();
   }
 
-  private refreshDirectory(dir: string, extensions: string[]): void {
-    const skipDirs = ['node_modules', 'dist', 'build', '.git', 'coverage'];
+  // ── ProjectContext implementation ──
 
-    let entries: fs.Dirent[];
-    try {
-      entries = fs.readdirSync(dir, { withFileTypes: true });
-    } catch {
-      // Directory may have been deleted between existsSync check and readdir
-      return;
-    }
-
-    for (const entry of entries) {
-      const fullPath = path.join(dir, entry.name);
-
-      if (entry.isDirectory()) {
-        if (!skipDirs.includes(entry.name)) {
-          this.refreshDirectory(fullPath, extensions);
-        }
-      } else if (extensions.some((ext) => entry.name.endsWith(ext))) {
-        try {
-          const existing = this.files.get(fullPath);
-          if (!existing) {
-            // New file
-            this.loadFile(fullPath);
-          } else {
-            const currentMtime = fs.statSync(fullPath).mtimeMs;
-            if (currentMtime !== existing.mtime) {
-              this.loadFile(fullPath);
-            }
-          }
-        } catch {
-          // File may have been deleted between readdir and stat/read
-          this.files.delete(fullPath);
-        }
-      }
-    }
+  getProjectRoot(): string {
+    return this.projectRoot;
   }
 
-  /**
-   * Converts 1-based line/column to 0-based offset.
-   */
-  private getOffset(filePath: string, line: number, column: number): number {
-    const absolutePath = path.resolve(this.projectRoot, filePath);
-    const file = this.files.get(absolutePath);
-    if (!file) return 0;
-
-    const lines = file.content.split('\n');
-    let offset = 0;
-
-    for (let i = 0; i < line - 1 && i < lines.length; i++) {
-      offset += lines[i].length + 1; // +1 for newline
-    }
-
-    return offset + (column - 1);
+  getProjectFiles(): string[] {
+    return this.fileManager.getProjectFiles();
   }
 
-  /**
-   * Converts 0-based offset to 1-based line/column.
-   */
-  private getLineColumn(
-    filePath: string,
-    offset: number
-  ): { line: number; column: number } {
-    const absolutePath = path.resolve(this.projectRoot, filePath);
-    const file = this.files.get(absolutePath);
-    if (!file) return { line: 1, column: 1 };
-
-    const content = file.content;
-    let line = 1;
-    let lastNewline = -1;
-
-    for (let i = 0; i < offset && i < content.length; i++) {
-      if (content[i] === '\n') {
-        line++;
-        lastNewline = i;
-      }
-    }
-
-    return { line, column: offset - lastNewline };
+  getFileContent(filePath: string): string | undefined {
+    return this.fileManager.getFileContent(filePath);
   }
 
-  /**
-   * Returns hover information (type, docs) at position.
-   */
+  // ── Other public accessors ──
+
+  getCompilerOptions(): ts.CompilerOptions {
+    return this.compilerOptions;
+  }
+
+  getProgram(): ts.Program | undefined {
+    return this.service.getProgram();
+  }
+
+  // ── Language intelligence methods ──
+
   getHover(filePath: string, line: number, column: number): string | undefined {
     const absolutePath = path.resolve(this.projectRoot, filePath);
-    const offset = this.getOffset(filePath, line, column);
+    const offset = this.toOffset(filePath, line, column);
 
     const quickInfo = this.service.getQuickInfoAtPosition(absolutePath, offset);
     if (!quickInfo) return undefined;
@@ -310,22 +205,19 @@ export class TypeScriptLanguageService {
     return docs ? `${typeInfo}\n\n${docs}` : typeInfo;
   }
 
-  /**
-   * Returns definition location for symbol at position.
-   */
   getDefinition(
     filePath: string,
     line: number,
     column: number
   ): FilePosition | undefined {
     const absolutePath = path.resolve(this.projectRoot, filePath);
-    const offset = this.getOffset(filePath, line, column);
+    const offset = this.toOffset(filePath, line, column);
 
     const definitions = this.service.getDefinitionAtPosition(absolutePath, offset);
     if (!definitions || definitions.length === 0) return undefined;
 
     const def = definitions[0];
-    const pos = this.getLineColumn(def.fileName, def.textSpan.start);
+    const pos = this.toLineColumn(def.fileName, def.textSpan.start);
 
     return {
       file: normalizePath(path.relative(this.projectRoot, def.fileName)),
@@ -334,22 +226,19 @@ export class TypeScriptLanguageService {
     };
   }
 
-  /**
-   * Returns all references to symbol at position with reference kind.
-   */
   getReferences(
     filePath: string,
     line: number,
     column: number
   ): ReferenceInfo[] {
     const absolutePath = path.resolve(this.projectRoot, filePath);
-    const offset = this.getOffset(filePath, line, column);
+    const offset = this.toOffset(filePath, line, column);
 
     const references = this.service.getReferencesAtPosition(absolutePath, offset);
     if (!references) return [];
 
     return references.map((ref) => {
-      const pos = this.getLineColumn(ref.fileName, ref.textSpan.start);
+      const pos = this.toLineColumn(ref.fileName, ref.textSpan.start);
       let kind: ReferenceKind = 'read';
       const isDefinition = (ref as { isDefinition?: boolean }).isDefinition ?? false;
       if (isDefinition) {
@@ -368,9 +257,6 @@ export class TypeScriptLanguageService {
     });
   }
 
-  /**
-   * Returns diagnostics (errors/warnings) for a file.
-   */
   getDiagnostics(filePath: string): Diagnostic[] {
     const absolutePath = path.resolve(this.projectRoot, filePath);
 
@@ -381,7 +267,7 @@ export class TypeScriptLanguageService {
 
     return allDiagnostics.map((diag) => {
       const pos = diag.start
-        ? this.getLineColumn(absolutePath, diag.start)
+        ? this.toLineColumn(absolutePath, diag.start)
         : { line: 1, column: 1 };
 
       return {
@@ -408,9 +294,6 @@ export class TypeScriptLanguageService {
     }
   }
 
-  /**
-   * Returns symbols (functions, classes, etc.) in a file.
-   */
   getSymbols(filePath: string): SymbolInfo[] {
     const absolutePath = path.resolve(this.projectRoot, filePath);
 
@@ -418,9 +301,8 @@ export class TypeScriptLanguageService {
     const symbols: SymbolInfo[] = [];
 
     const walk = (item: ts.NavigationTree, containerName?: string): void => {
-      // Skip the root module node
       if (item.kind !== ts.ScriptElementKind.moduleElement) {
-        const pos = this.getLineColumn(absolutePath, item.spans[0]?.start ?? 0);
+        const pos = this.toLineColumn(absolutePath, item.spans[0]?.start ?? 0);
         symbols.push({
           name: item.text,
           kind: item.kind,
@@ -441,16 +323,13 @@ export class TypeScriptLanguageService {
     return symbols;
   }
 
-  /**
-   * Returns completions at position.
-   */
   getCompletions(
     filePath: string,
     line: number,
     column: number
   ): CompletionItem[] {
     const absolutePath = path.resolve(this.projectRoot, filePath);
-    const offset = this.getOffset(filePath, line, column);
+    const offset = this.toOffset(filePath, line, column);
 
     const completions = this.service.getCompletionsAtPosition(
       absolutePath,
@@ -468,16 +347,13 @@ export class TypeScriptLanguageService {
     }));
   }
 
-  /**
-   * Returns signature help at position (for function calls).
-   */
   getSignature(
     filePath: string,
     line: number,
     column: number
   ): SignatureInfo | undefined {
     const absolutePath = path.resolve(this.projectRoot, filePath);
-    const offset = this.getOffset(filePath, line, column);
+    const offset = this.toOffset(filePath, line, column);
 
     const sigHelp = this.service.getSignatureHelpItems(absolutePath, offset, {});
     if (!sigHelp || sigHelp.items.length === 0) return undefined;
@@ -505,10 +381,6 @@ export class TypeScriptLanguageService {
     };
   }
 
-  /**
-   * Bundles multiple analyses for a position into one call.
-   * Useful for AI agents to get full context efficiently.
-   */
   analyzePosition(
     filePath: string,
     line: number,
@@ -523,53 +395,19 @@ export class TypeScriptLanguageService {
     };
   }
 
-  /**
-   * Returns all indexed file paths (relative to project root).
-   */
-  getProjectFiles(): string[] {
-    return Array.from(this.files.keys()).map((f) =>
-      normalizePath(path.relative(this.projectRoot, f))
-    );
-  }
-
-  /**
-   * Returns the loaded compiler options.
-   */
-  getCompilerOptions(): ts.CompilerOptions {
-    return this.compilerOptions;
-  }
-
-  /**
-   * Returns file content if loaded.
-   */
-  getFileContent(filePath: string): string | undefined {
-    const absolutePath = path.resolve(this.projectRoot, filePath);
-    return this.files.get(absolutePath)?.content;
-  }
-
-  /**
-   * Returns the underlying program for AST access.
-   */
-  getProgram(): ts.Program | undefined {
-    return this.service.getProgram();
-  }
-
-  /**
-   * Returns implementations of interface/abstract method at position.
-   */
   getImplementations(
     filePath: string,
     line: number,
     column: number
   ): FilePosition[] {
     const absolutePath = path.resolve(this.projectRoot, filePath);
-    const offset = this.getOffset(filePath, line, column);
+    const offset = this.toOffset(filePath, line, column);
 
     const implementations = this.service.getImplementationAtPosition(absolutePath, offset);
     if (!implementations) return [];
 
     return implementations.map((impl) => {
-      const pos = this.getLineColumn(impl.fileName, impl.textSpan.start);
+      const pos = this.toLineColumn(impl.fileName, impl.textSpan.start);
       return {
         file: normalizePath(path.relative(this.projectRoot, impl.fileName)),
         line: pos.line,
@@ -578,12 +416,9 @@ export class TypeScriptLanguageService {
     });
   }
 
-  /**
-   * Returns all imports in a file.
-   */
   getImports(filePath: string): ImportInfo[] {
     const absolutePath = path.resolve(this.projectRoot, filePath);
-    const content = this.files.get(absolutePath)?.content;
+    const content = this.fileManager.getFileEntry(absolutePath)?.content;
     if (!content) return [];
 
     const sourceFile = ts.createSourceFile(
@@ -608,12 +443,10 @@ export class TypeScriptLanguageService {
         };
 
         if (importClause) {
-          // Default import
           if (importClause.name) {
             info.defaultImport = importClause.name.text;
           }
 
-          // Named imports or namespace import
           if (importClause.namedBindings) {
             if (ts.isNamespaceImport(importClause.namedBindings)) {
               info.namespaceImport = importClause.namedBindings.name.text;
@@ -632,22 +465,17 @@ export class TypeScriptLanguageService {
     return imports;
   }
 
-  /**
-   * Returns hierarchical outline of a file.
-   */
   getOutline(filePath: string): OutlineItem[] {
     const absolutePath = path.resolve(this.projectRoot, filePath);
     const navTree = this.service.getNavigationTree(absolutePath);
 
     const convertItem = (item: ts.NavigationTree): OutlineItem | null => {
-      // Skip the root module node
       if (item.kind === ts.ScriptElementKind.moduleElement) {
-        // Return children directly
         return null;
       }
 
-      const startPos = this.getLineColumn(absolutePath, item.spans[0]?.start ?? 0);
-      const endPos = this.getLineColumn(
+      const startPos = this.toLineColumn(absolutePath, item.spans[0]?.start ?? 0);
+      const endPos = this.toLineColumn(
         absolutePath,
         (item.spans[0]?.start ?? 0) + (item.spans[0]?.length ?? 0)
       );
@@ -670,7 +498,6 @@ export class TypeScriptLanguageService {
       return outlineItem;
     };
 
-    // If root is module, return its children
     if (navTree.kind === ts.ScriptElementKind.moduleElement && navTree.childItems) {
       return navTree.childItems
         .map(convertItem)
@@ -681,9 +508,6 @@ export class TypeScriptLanguageService {
     return result ? [result] : [];
   }
 
-  /**
-   * Returns locations that would be affected by renaming symbol at position.
-   */
   getRenameLocations(
     filePath: string,
     line: number,
@@ -691,7 +515,7 @@ export class TypeScriptLanguageService {
     newName: string
   ): RenameLocation[] {
     const absolutePath = path.resolve(this.projectRoot, filePath);
-    const offset = this.getOffset(filePath, line, column);
+    const offset = this.toOffset(filePath, line, column);
 
     const renameInfo = this.service.getRenameInfo(absolutePath, offset);
     if (!renameInfo.canRename) return [];
@@ -699,15 +523,15 @@ export class TypeScriptLanguageService {
     const locations = this.service.findRenameLocations(
       absolutePath,
       offset,
-      false, // findInStrings
-      false, // findInComments
-      false  // providePrefixAndSuffixTextForRename
+      false,
+      false,
+      false
     );
 
     if (!locations) return [];
 
     return locations.map((loc) => {
-      const pos = this.getLineColumn(loc.fileName, loc.textSpan.start);
+      const pos = this.toLineColumn(loc.fileName, loc.textSpan.start);
       return {
         file: normalizePath(path.relative(this.projectRoot, loc.fileName)),
         line: pos.line,
@@ -718,9 +542,6 @@ export class TypeScriptLanguageService {
     });
   }
 
-  /**
-   * Returns call hierarchy for symbol at position.
-   */
   getCallHierarchy(
     filePath: string,
     line: number,
@@ -728,12 +549,11 @@ export class TypeScriptLanguageService {
     direction: 'incoming' | 'outgoing'
   ): CallHierarchyCall[] {
     const absolutePath = path.resolve(this.projectRoot, filePath);
-    const offset = this.getOffset(filePath, line, column);
+    const offset = this.toOffset(filePath, line, column);
 
     const preparedItems = this.service.prepareCallHierarchy(absolutePath, offset);
     if (!preparedItems) return [];
 
-    // prepareCallHierarchy can return a single item or an array
     const items = Array.isArray(preparedItems) ? preparedItems : [preparedItems];
     if (items.length === 0) return [];
     const results: CallHierarchyCall[] = [];
@@ -741,8 +561,8 @@ export class TypeScriptLanguageService {
     if (direction === 'incoming') {
       const incoming = this.service.provideCallHierarchyIncomingCalls(absolutePath, offset);
       for (const call of incoming) {
-        const fromPos = this.getLineColumn(call.from.file, call.from.selectionSpan.start);
-        const fromEndPos = this.getLineColumn(
+        const fromPos = this.toLineColumn(call.from.file, call.from.selectionSpan.start);
+        const fromEndPos = this.toLineColumn(
           call.from.file,
           call.from.span.start
         );
@@ -757,7 +577,7 @@ export class TypeScriptLanguageService {
             selectionColumn: fromPos.column,
           },
           fromRanges: call.fromSpans.map((span) => {
-            const pos = this.getLineColumn(call.from.file, span.start);
+            const pos = this.toLineColumn(call.from.file, span.start);
             return { line: pos.line, column: pos.column };
           }),
         });
@@ -765,8 +585,8 @@ export class TypeScriptLanguageService {
     } else {
       const outgoing = this.service.provideCallHierarchyOutgoingCalls(absolutePath, offset);
       for (const call of outgoing) {
-        const toPos = this.getLineColumn(call.to.file, call.to.selectionSpan.start);
-        const toEndPos = this.getLineColumn(call.to.file, call.to.span.start);
+        const toPos = this.toLineColumn(call.to.file, call.to.selectionSpan.start);
+        const toEndPos = this.toLineColumn(call.to.file, call.to.span.start);
         results.push({
           to: {
             name: call.to.name,
@@ -778,7 +598,7 @@ export class TypeScriptLanguageService {
             selectionColumn: toPos.column,
           },
           fromRanges: call.fromSpans.map((span) => {
-            const pos = this.getLineColumn(absolutePath, span.start);
+            const pos = this.toLineColumn(absolutePath, span.start);
             return { line: pos.line, column: pos.column };
           }),
         });
@@ -788,9 +608,6 @@ export class TypeScriptLanguageService {
     return results;
   }
 
-  /**
-   * Returns type hierarchy for type at position.
-   */
   getTypeHierarchy(
     filePath: string,
     line: number,
@@ -798,7 +615,7 @@ export class TypeScriptLanguageService {
     direction: 'supertypes' | 'subtypes'
   ): TypeHierarchyItem[] {
     const absolutePath = path.resolve(this.projectRoot, filePath);
-    const offset = this.getOffset(filePath, line, column);
+    const offset = this.toOffset(filePath, line, column);
     const program = this.service.getProgram();
     if (!program) return [];
 
@@ -807,7 +624,6 @@ export class TypeScriptLanguageService {
 
     const checker = program.getTypeChecker();
 
-    // Find the node at position
     const findNode = (node: ts.Node): ts.Node | undefined => {
       if (offset >= node.getStart() && offset < node.getEnd()) {
         const child = ts.forEachChild(node, findNode);
@@ -819,7 +635,6 @@ export class TypeScriptLanguageService {
     const node = findNode(sourceFile);
     if (!node) return [];
 
-    // Find class or interface declaration
     let declaration: ts.ClassDeclaration | ts.InterfaceDeclaration | undefined;
     let current: ts.Node | undefined = node;
     while (current) {
@@ -835,7 +650,6 @@ export class TypeScriptLanguageService {
     const results: TypeHierarchyItem[] = [];
 
     if (direction === 'supertypes') {
-      // Get heritage clauses (extends, implements)
       if (declaration.heritageClauses) {
         for (const clause of declaration.heritageClauses) {
           for (const typeNode of clause.types) {
@@ -860,12 +674,14 @@ export class TypeScriptLanguageService {
         }
       }
     } else {
-      // Find subtypes - search all files for classes/interfaces that extend/implement this
       const targetName = declaration.name.text;
-      for (const [, fileInfo] of this.files) {
+      for (const projectFile of this.fileManager.getProjectFiles()) {
+        const content = this.fileManager.getFileContent(projectFile);
+        if (!content) continue;
+
         const sf = ts.createSourceFile(
           'temp.ts',
-          fileInfo.content,
+          content,
           ts.ScriptTarget.Latest,
           true
         );
@@ -900,10 +716,6 @@ export class TypeScriptLanguageService {
     return results;
   }
 
-  /**
-   * Applies a rename operation, modifying files in memory.
-   * Returns summary of changes made.
-   */
   applyRename(
     filePath: string,
     line: number,
@@ -916,7 +728,6 @@ export class TypeScriptLanguageService {
       return { success: false, filesModified: [], totalChanges: 0 };
     }
 
-    // Group locations by file
     const changesByFile = new Map<string, RenameLocation[]>();
     for (const loc of locations) {
       const existing = changesByFile.get(loc.file) ?? [];
@@ -926,30 +737,25 @@ export class TypeScriptLanguageService {
 
     const filesModified: string[] = [];
 
-    // Apply changes to each file
     for (const [file, fileLocations] of changesByFile) {
-      const absolutePath = path.resolve(this.projectRoot, file);
-      const fileInfo = this.files.get(absolutePath);
-      if (!fileInfo) continue;
+      const content = this.fileManager.getFileContent(file);
+      if (!content) continue;
 
-      let content = fileInfo.content;
+      let result = content;
 
-      // Sort locations in reverse order (by offset) to preserve positions
       const sortedLocations = [...fileLocations].sort((a, b) => {
         if (a.line !== b.line) return b.line - a.line;
         return b.column - a.column;
       });
 
-      // Apply each change
       for (const loc of sortedLocations) {
-        const offset = this.getOffset(file, loc.line, loc.column);
-        const before = content.substring(0, offset);
-        const after = content.substring(offset + loc.originalText.length);
-        content = before + newName + after;
+        const offset = getOffset(result, loc.line, loc.column);
+        const before = result.substring(0, offset);
+        const after = result.substring(offset + loc.originalText.length);
+        result = before + newName + after;
       }
 
-      // Update the file in memory
-      this.updateFile(file, content);
+      this.updateFile(file, result);
       filesModified.push(file);
     }
 
@@ -960,9 +766,6 @@ export class TypeScriptLanguageService {
     };
   }
 
-  /**
-   * Returns diagnostics for all files in the project.
-   */
   getAllDiagnostics(severity?: DiagnosticSeverity): AllDiagnosticsResult {
     const files: Record<string, Diagnostic[]> = {};
     const summary = {
@@ -973,11 +776,9 @@ export class TypeScriptLanguageService {
       total: 0,
     };
 
-    for (const absolutePath of this.files.keys()) {
-      const relativePath = normalizePath(path.relative(this.projectRoot, absolutePath));
+    for (const relativePath of this.fileManager.getProjectFiles()) {
       const diagnostics = this.getDiagnostics(relativePath);
 
-      // Filter by severity if specified
       const filtered = severity
         ? diagnostics.filter(d => d.severity === severity)
         : diagnostics;
@@ -986,7 +787,6 @@ export class TypeScriptLanguageService {
         files[relativePath] = filtered;
       }
 
-      // Update summary counts
       for (const diag of diagnostics) {
         summary.total++;
         switch (diag.severity) {
@@ -1009,18 +809,14 @@ export class TypeScriptLanguageService {
     return { files, summary };
   }
 
-  /**
-   * Formats a document and returns the result.
-   */
   formatDocument(filePath: string, options?: FormatOptions): FormatResult {
     const absolutePath = path.resolve(this.projectRoot, filePath);
-    const fileInfo = this.files.get(absolutePath);
+    const fileEntry = this.fileManager.getFileEntry(absolutePath);
 
-    if (!fileInfo) {
+    if (!fileEntry) {
       return { formatted: false, changeCount: 0 };
     }
 
-    // Build TypeScript format options
     const formatOptions: ts.FormatCodeSettings = {
       indentSize: options?.indentSize ?? 2,
       tabSize: options?.tabSize ?? 2,
@@ -1036,15 +832,13 @@ export class TypeScriptLanguageService {
       placeOpenBraceOnNewLineForControlBlocks: options?.placeOpenBraceOnNewLineForControlBlocks ?? false,
     };
 
-    // Get formatting edits
     const edits = this.service.getFormattingEditsForDocument(absolutePath, formatOptions);
 
     if (edits.length === 0) {
-      return { formatted: true, changeCount: 0, content: fileInfo.content };
+      return { formatted: true, changeCount: 0, content: fileEntry.content };
     }
 
-    // Apply edits in reverse order to preserve positions
-    let content = fileInfo.content;
+    let content = fileEntry.content;
     const sortedEdits = [...edits].sort((a, b) => b.span.start - a.span.start);
 
     for (const edit of sortedEdits) {
@@ -1053,7 +847,6 @@ export class TypeScriptLanguageService {
       content = before + edit.newText + after;
     }
 
-    // Update file in memory
     this.updateFile(filePath, content);
 
     return {
@@ -1063,15 +856,11 @@ export class TypeScriptLanguageService {
     };
   }
 
-  /**
-   * Searches for symbols across the workspace using TypeScript's navigateToItems API.
-   * Faster than AST traversal for simple name lookups.
-   */
   getWorkspaceSymbols(query: string, maxResults: number = 100): WorkspaceSymbol[] {
     const items = this.service.getNavigateToItems(query, maxResults);
 
     return items.map(item => {
-      const pos = this.getLineColumn(item.fileName, item.textSpan.start);
+      const pos = this.toLineColumn(item.fileName, item.textSpan.start);
       return {
         name: item.name,
         kind: item.kind,

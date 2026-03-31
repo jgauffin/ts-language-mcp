@@ -1,7 +1,6 @@
 import ts from 'typescript';
 import { minimatch } from 'minimatch';
-import type { TypeScriptLanguageService } from './language-service.js';
-import type { FindParams, FindResult, SymbolKind } from './types.js';
+import type { ProjectContext, FindParams, FindResult, SymbolKind } from './types.js';
 import { normalizePath, pathEndsWith, pathStartsWith } from './tools.js';
 
 /**
@@ -17,10 +16,10 @@ import { normalizePath, pathEndsWith, pathStartsWith } from './tools.js';
  * });
  */
 export class AstFinder {
-  private languageService: TypeScriptLanguageService;
+  private context: ProjectContext;
 
-  constructor(languageService: TypeScriptLanguageService) {
-    this.languageService = languageService;
+  constructor(context: ProjectContext) {
+    this.context = context;
   }
 
   /**
@@ -37,7 +36,7 @@ export class AstFinder {
     const findOtherKinds = !kinds || kinds.length === 0 || kinds.some((k) => k !== 'comment');
 
     for (const filePath of files) {
-      const content = this.languageService.getFileContent(filePath);
+      const content = this.context.getFileContent(filePath);
       if (!content) continue;
 
       // Parse file directly for AST traversal
@@ -148,7 +147,7 @@ export class AstFinder {
    * Determines which files to search based on scope.
    */
   private getFilesToSearch(scope: string, searchPath?: string): string[] {
-    const allFiles = this.languageService.getProjectFiles();
+    const allFiles = this.context.getProjectFiles();
 
     switch (scope) {
       case 'file':

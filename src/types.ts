@@ -1,6 +1,135 @@
 import type ts from 'typescript';
 
 /**
+ * Minimal project interface for analyzers and AST tools.
+ * Enables testing with in-memory implementations.
+ */
+export interface ProjectContext {
+  getProjectFiles(): string[];
+  getFileContent(filePath: string): string | undefined;
+  getProjectRoot(): string;
+}
+
+// ── Complexity Analysis Types ──
+
+export interface FunctionComplexity {
+  name: string;
+  kind: 'function' | 'method' | 'arrow' | 'getter' | 'setter' | 'constructor';
+  file: string;
+  line: number;
+  endLine: number;
+  cyclomaticComplexity: number;
+  linesOfCode: number;
+  parameterCount: number;
+}
+
+export interface FileComplexity {
+  file: string;
+  totalLinesOfCode: number;
+  blankLines: number;
+  commentLines: number;
+  functions: FunctionComplexity[];
+  averageComplexity: number;
+  maxComplexity: number;
+}
+
+export interface ComplexityAnalysisResult {
+  totalFiles: number;
+  totalFunctions: number;
+  totalLOC: number;
+  averageComplexity: number;
+  mostComplexFunctions: FunctionComplexity[];
+  largestFiles: { file: string; linesOfCode: number; functionCount: number; maxComplexity: number }[];
+}
+
+// ── Coupling Analysis Types ──
+
+export interface FileCouplingMetrics {
+  file: string;
+  efferentCoupling: number;
+  afferentCoupling: number;
+  instability: number;
+  efferentModules: string[];
+  afferentModules: string[];
+}
+
+export interface CouplingAnalysisResult {
+  totalFiles: number;
+  averageInstability: number;
+  mostUnstable: FileCouplingMetrics[];
+  mostCoupled: FileCouplingMetrics[];
+}
+
+// ── Indirection Hotspot Types ──
+
+export interface SymbolNode {
+  name: string;
+  kind: string;
+  file: string;
+  line: number;
+  column: number;
+  containerName?: string;
+}
+
+export interface CallChainStep {
+  name: string;
+  file: string;
+  line: number;
+}
+
+export interface IndirectionOffender {
+  symbol: SymbolNode;
+  score: number;
+  directCallers: number;
+  indirectCallers: number;
+  maxChainDepth: number;
+  avgChainDepth: number;
+  worstChains: CallChainStep[][];
+}
+
+export interface IndirectionHotspotsResult {
+  totalSymbols: number;
+  candidates: number;
+  offenders: IndirectionOffender[];
+  skip: number;
+  take: number;
+}
+
+export interface IndirectionHotspotsParams {
+  maxDepth?: number;
+  minDirectCallers?: number;
+  maxChainsPerOffender?: number;
+  take?: number;
+  skip?: number;
+  includeTests?: boolean;
+}
+
+// ── Duplication Detection Types ──
+
+export interface DuplicateFragment {
+  file: string;
+  startLine: number;
+  endLine: number;
+  linesOfCode: number;
+  snippet: string;
+}
+
+export interface DuplicateGroup {
+  hash: string;
+  nodeKind: string;
+  fragments: DuplicateFragment[];
+  similarity: number;
+}
+
+export interface DuplicationAnalysisResult {
+  totalGroups: number;
+  totalDuplicateFragments: number;
+  totalDuplicateLines: number;
+  filesAffected: number;
+  groups: DuplicateGroup[];
+}
+
+/**
  * Symbol kinds supported by the `find` tool.
  * Maps to TypeScript's SyntaxKind but uses human-readable names for AI agents.
  *
