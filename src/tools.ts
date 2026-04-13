@@ -58,6 +58,22 @@ export const TOOL_SCHEMAS = {
     required: ['file'],
   },
 
+  diagnosticsFileParams: {
+    type: 'object',
+    properties: {
+      file: { type: 'string', description: 'Path to the file (relative to project root)' },
+      includeEslint: {
+        type: 'boolean',
+        description: 'Include ESLint diagnostics if ESLint is installed in the target project (default: true)',
+      },
+      limit: {
+        type: 'number',
+        description: 'Maximum diagnostics to return, sorted by severity (default: 50, max: 500)',
+      },
+    },
+    required: ['file'],
+  },
+
   findParams: {
     type: 'object',
     properties: {
@@ -170,6 +186,14 @@ export const TOOL_SCHEMAS = {
         enum: ['error', 'warning', 'suggestion', 'message'],
         description: 'Filter diagnostics by severity (optional)',
       },
+      includeEslint: {
+        type: 'boolean',
+        description: 'Include ESLint diagnostics if ESLint is installed in the target project (default: true)',
+      },
+      limit: {
+        type: 'number',
+        description: 'Maximum diagnostics to return across all files, sorted by severity (default: 50, max: 500)',
+      },
     },
   },
 
@@ -235,8 +259,10 @@ export const TOOL_DEFINITIONS = [
     {
       name: 'get_diagnostics',
       description:
-        'Get TypeScript errors and warnings for a file. Returns compiler diagnostics.',
-      inputSchema: TOOL_SCHEMAS.fileParam,
+        'Get TypeScript + ESLint errors and warnings for a file. ' +
+        'ESLint results are included when ESLint is installed in the target project. ' +
+        'Results are sorted by severity and capped at the top 50 most severe by default.',
+      inputSchema: TOOL_SCHEMAS.diagnosticsFileParams,
     },
     {
       name: 'get_symbols',
@@ -331,8 +357,10 @@ export const TOOL_DEFINITIONS = [
     {
       name: 'get_all_diagnostics',
       description:
-        'Get TypeScript errors and warnings for all files in the project. ' +
-        'Useful for checking project health after changes. Optionally filter by severity.',
+        'Get TypeScript + ESLint errors and warnings for all files in the project. ' +
+        'Useful for checking project health after changes. ' +
+        'Results are sorted by severity (errors first) and capped at the top 50 most severe by default — ' +
+        'summary.total reflects the true total and summary.truncated indicates when the cap was hit.',
       inputSchema: TOOL_SCHEMAS.allDiagnosticsParams,
     },
     {
@@ -421,10 +449,10 @@ export class ToolHandler {
     return task;
   }
 
-  private executeToolCall(
+  private async executeToolCall(
     name: string,
     args: Record<string, unknown>
-  ): { content: Array<{ type: 'text'; text: string }>; isError?: boolean } {
+  ): Promise<{ content: Array<{ type: 'text'; text: string }>; isError?: boolean }> {
     try {
       // Throttle file refresh to avoid re-walking the directory tree on every call
       const now = Date.now();
@@ -446,7 +474,7 @@ export class ToolHandler {
         }
       }
 
-      const result = this.dispatch(name, args);
+      const result = await this.dispatch(name, args);
       return {
         content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
       };
@@ -458,7 +486,7 @@ export class ToolHandler {
     }
   }
 
-  private dispatch(name: string, args: Record<string, unknown>): unknown {
+  private dispatch(name: string, args: Record<string, unknown>): unknown | Promise<unknown> {
     switch (name) {
       case 'get_hover':
         return this.getHover(args as unknown as PositionParams);
@@ -470,7 +498,7 @@ export class ToolHandler {
         return this.getReferences(args as unknown as PositionParams);
 
       case 'get_diagnostics':
-        return this.getDiagnostics(args as { file: string });
+        return this.getDiagnostics(args as { file: string; includeEslint?: boolean; limit?: number });
 
       case 'get_symbols':
         return this.getSymbols(args as { file: string });
@@ -521,7 +549,9 @@ export class ToolHandler {
         return this.renameSymbol(args as unknown as PositionParams & { newName: string });
 
       case 'get_all_diagnostics':
-        return this.getAllDiagnostics(args as { severity?: DiagnosticSeverity });
+        return this.getAllDiagnostics(
+          args as { severity?: DiagnosticSeverity; includeEslint?: boolean; limit?: number }
+        );
 
       case 'format_document':
         return this.formatDocument(args as { file: string; options?: FormatOptions });
@@ -561,8 +591,11 @@ export class ToolHandler {
     return { references: result };
   }
 
-  private getDiagnostics(params: { file: string }) {
-    const result = this.languageService.getDiagnostics(params.file);
+  private async getDiagnostics(params: { file: string; includeEslint?: boolean; limit?: number }) {
+    const result = await this.languageService.getDiagnostics(params.file, {
+      includeEslint: params.includeEslint,
+      limit: params.limit,
+    });
     return { diagnostics: result };
   }
 
@@ -651,37 +684,39 @@ export class ToolHandler {
     return { types: result, count: result.length };
   }
 
-  private batchAnalyze(params: {
+  private async batchAnalyze(params: {
     positions: PositionParams[];
     include?: Array<'hover' | 'definition' | 'references' | 'diagnostics' | 'signature'>;
   }) {
     const include = params.include ?? ['hover', 'definition', 'references', 'diagnostics', 'signature'];
 
-    const results = params.positions.map((pos) => {
-      const analysis: Record<string, unknown> = {
-        file: pos.file,
-        line: pos.line,
-        column: pos.column,
-      };
+    const results = await Promise.all(
+      params.positions.map(async (pos) => {
+        const analysis: Record<string, unknown> = {
+          file: pos.file,
+          line: pos.line,
+          column: pos.column,
+        };
 
-      if (include.includes('hover')) {
-        analysis.hover = this.languageService.getHover(pos.file, pos.line, pos.column) ?? null;
-      }
-      if (include.includes('definition')) {
-        analysis.definition = this.languageService.getDefinition(pos.file, pos.line, pos.column) ?? null;
-      }
-      if (include.includes('references')) {
-        analysis.references = this.languageService.getReferences(pos.file, pos.line, pos.column);
-      }
-      if (include.includes('diagnostics')) {
-        analysis.diagnostics = this.languageService.getDiagnostics(pos.file);
-      }
-      if (include.includes('signature')) {
-        analysis.signature = this.languageService.getSignature(pos.file, pos.line, pos.column) ?? null;
-      }
+        if (include.includes('hover')) {
+          analysis.hover = this.languageService.getHover(pos.file, pos.line, pos.column) ?? null;
+        }
+        if (include.includes('definition')) {
+          analysis.definition = this.languageService.getDefinition(pos.file, pos.line, pos.column) ?? null;
+        }
+        if (include.includes('references')) {
+          analysis.references = this.languageService.getReferences(pos.file, pos.line, pos.column);
+        }
+        if (include.includes('diagnostics')) {
+          analysis.diagnostics = await this.languageService.getDiagnostics(pos.file);
+        }
+        if (include.includes('signature')) {
+          analysis.signature = this.languageService.getSignature(pos.file, pos.line, pos.column) ?? null;
+        }
 
-      return analysis;
-    });
+        return analysis;
+      })
+    );
 
     return { results, count: results.length };
   }
@@ -696,8 +731,15 @@ export class ToolHandler {
     return result;
   }
 
-  private getAllDiagnostics(params: { severity?: DiagnosticSeverity }) {
-    const result = this.languageService.getAllDiagnostics(params.severity);
+  private async getAllDiagnostics(params: {
+    severity?: DiagnosticSeverity;
+    includeEslint?: boolean;
+    limit?: number;
+  }) {
+    const result = await this.languageService.getAllDiagnostics(params.severity, {
+      includeEslint: params.includeEslint,
+      limit: params.limit,
+    });
     return result;
   }
 

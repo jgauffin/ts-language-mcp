@@ -112,15 +112,22 @@ export interface PositionParams {
 export type DiagnosticSeverity = 'error' | 'warning' | 'suggestion' | 'message';
 
 /**
- * A diagnostic (error/warning) from TypeScript.
+ * Source of a diagnostic — which tool produced it.
+ */
+export type DiagnosticSource = 'typescript' | 'eslint';
+
+/**
+ * A diagnostic (error/warning) from TypeScript or ESLint.
  */
 export interface Diagnostic {
   file: string;
   line: number;
   column: number;
   message: string;
-  code: number;
+  code: number | string;
   severity: DiagnosticSeverity;
+  source: DiagnosticSource;
+  ruleId?: string;
 }
 
 /**
@@ -277,6 +284,8 @@ export interface AllDiagnosticsResult {
     suggestions: number;
     messages: number;
     total: number;
+    returned: number;
+    truncated: boolean;
   };
 }
 

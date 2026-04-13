@@ -1,6 +1,8 @@
 import ts from 'typescript';
 import * as path from 'path';
 import * as fs from 'fs';
+import { createRequire } from 'module';
+import type { ESLint, Linter } from 'eslint';
 import type {
   FilePosition,
   Diagnostic,
@@ -25,6 +27,15 @@ import type {
 } from './types.js';
 import { normalizePath } from './tools.js';
 
+const DEFAULT_DIAGNOSTICS_LIMIT = 50;
+const MAX_DIAGNOSTICS_LIMIT = 500;
+const SEVERITY_RANK: Record<DiagnosticSeverity, number> = {
+  error: 0,
+  warning: 1,
+  suggestion: 2,
+  message: 3,
+};
+
 /**
  * Wraps TypeScript's Language Service to provide code intelligence.
  * Manages file state, project configuration, and translates TS APIs
@@ -39,19 +50,27 @@ export class TypeScriptLanguageService {
   private files: Map<string, { content: string; version: number; mtime: number }> = new Map();
   private projectRoot: string;
   private compilerOptions: ts.CompilerOptions;
+  private tsConfigFileNames: string[] | null;
+  private eslint: ESLint | null = null;
+  private eslintNotified = false;
+  private eslintErrorNotified = false;
 
   constructor(projectRoot: string) {
     this.projectRoot = path.resolve(projectRoot).replace(/[\\\/]+$/, '');
-    this.compilerOptions = this.loadCompilerOptions();
+    const config = this.loadProjectConfig();
+    this.compilerOptions = config.options;
+    this.tsConfigFileNames = config.fileNames;
     this.service = this.createLanguageService();
     this.indexProjectFiles();
+    this.eslint = this.loadEslint();
   }
 
   /**
-   * Loads tsconfig.json from the project root, or falls back to sensible defaults.
+   * Loads tsconfig.json from the project root. Returns compiler options and,
+   * when a tsconfig is present, the fully-resolved list of files it includes.
    * Only checks the project root directory — does NOT walk up to parent directories.
    */
-  private loadCompilerOptions(): ts.CompilerOptions {
+  private loadProjectConfig(): { options: ts.CompilerOptions; fileNames: string[] | null } {
     const configPath = path.join(this.projectRoot, 'tsconfig.json');
 
     if (fs.existsSync(configPath)) {
@@ -60,7 +79,7 @@ export class TypeScriptLanguageService {
         console.error(
           `Warning: failed to read tsconfig.json: ${ts.flattenDiagnosticMessageText(configFile.error.messageText, '\n')}`
         );
-        return this.defaultCompilerOptions();
+        return { options: this.defaultCompilerOptions(), fileNames: null };
       }
 
       const parsed = ts.parseJsonConfigFileContent(
@@ -75,10 +94,34 @@ export class TypeScriptLanguageService {
           );
         }
       }
-      return parsed.options;
+      return { options: parsed.options, fileNames: parsed.fileNames };
     }
 
-    return this.defaultCompilerOptions();
+    return { options: this.defaultCompilerOptions(), fileNames: null };
+  }
+
+  /**
+   * Attempts to load ESLint from the target project's node_modules.
+   * ESLint is optional — absence is not an error; TS diagnostics still flow.
+   */
+  private loadEslint(): ESLint | null {
+    try {
+      const require = createRequire(path.join(this.projectRoot, 'package.json'));
+      const eslintModule = require('eslint') as typeof import('eslint');
+      const instance = new eslintModule.ESLint({
+        cwd: this.projectRoot,
+        errorOnUnmatchedPattern: false,
+      });
+      return instance;
+    } catch {
+      if (!this.eslintNotified) {
+        console.error(
+          'Info: ESLint not found in target project — skipping lint diagnostics.'
+        );
+        this.eslintNotified = true;
+      }
+      return null;
+    }
   }
 
   private defaultCompilerOptions(): ts.CompilerOptions {
@@ -127,9 +170,17 @@ export class TypeScriptLanguageService {
   }
 
   /**
-   * Indexes all TS/JS files in the project for analysis.
+   * Indexes project files for analysis. Prefers the tsconfig's resolved file
+   * list so include/exclude/files are honored; falls back to a directory
+   * walker when no tsconfig is present.
    */
   private indexProjectFiles(): void {
+    if (this.tsConfigFileNames && this.tsConfigFileNames.length > 0) {
+      for (const fileName of this.tsConfigFileNames) {
+        this.loadFile(fileName);
+      }
+      return;
+    }
     const extensions = ['.ts', '.tsx', '.js', '.jsx'];
     this.walkDirectory(this.projectRoot, extensions);
   }
@@ -369,30 +420,84 @@ export class TypeScriptLanguageService {
   }
 
   /**
-   * Returns diagnostics (errors/warnings) for a file.
+   * Returns diagnostics (errors/warnings) for a file from TypeScript and,
+   * if available, ESLint. Results are sorted by severity and capped.
    */
-  getDiagnostics(filePath: string): Diagnostic[] {
+  async getDiagnostics(
+    filePath: string,
+    options?: { includeEslint?: boolean; limit?: number }
+  ): Promise<Diagnostic[]> {
     const absolutePath = path.resolve(this.projectRoot, filePath);
+    const relativePath = normalizePath(path.relative(this.projectRoot, absolutePath));
+    const includeEslint = options?.includeEslint ?? true;
+    const limit = clampLimit(options?.limit);
 
     const syntactic = this.service.getSyntacticDiagnostics(absolutePath);
     const semantic = this.service.getSemanticDiagnostics(absolutePath);
 
-    const allDiagnostics = [...syntactic, ...semantic];
-
-    return allDiagnostics.map((diag) => {
+    const tsDiagnostics: Diagnostic[] = [...syntactic, ...semantic].map((diag) => {
       const pos = diag.start
         ? this.getLineColumn(absolutePath, diag.start)
         : { line: 1, column: 1 };
 
       return {
-        file: normalizePath(path.relative(this.projectRoot, absolutePath)),
+        file: relativePath,
         line: pos.line,
         column: pos.column,
         message: ts.flattenDiagnosticMessageText(diag.messageText, '\n'),
         code: diag.code,
         severity: this.mapDiagnosticCategory(diag.category),
+        source: 'typescript',
       };
     });
+
+    const eslintDiagnostics = includeEslint
+      ? await this.getEslintDiagnostics(absolutePath, relativePath)
+      : [];
+
+    return sortAndLimitDiagnostics([...tsDiagnostics, ...eslintDiagnostics], limit);
+  }
+
+  private async getEslintDiagnostics(
+    absolutePath: string,
+    relativePath: string
+  ): Promise<Diagnostic[]> {
+    if (!this.eslint) return [];
+
+    const fileInfo = this.files.get(absolutePath);
+    const content = fileInfo?.content ?? (fs.existsSync(absolutePath) ? fs.readFileSync(absolutePath, 'utf-8') : null);
+    if (content === null) return [];
+
+    try {
+      const isIgnored = await this.eslint.isPathIgnored(absolutePath);
+      if (isIgnored) return [];
+
+      const results = await this.eslint.lintText(content, { filePath: absolutePath });
+      const out: Diagnostic[] = [];
+      for (const result of results) {
+        for (const msg of result.messages) {
+          if (!msg.fatal && msg.ruleId === null) continue;
+          out.push(mapEslintMessage(msg, relativePath));
+        }
+      }
+      return out;
+    } catch (err) {
+      const msg = (err as Error).message;
+      const noConfig = /could not find config file/i.test(msg);
+      if (noConfig) {
+        if (!this.eslintErrorNotified) {
+          console.error(
+            'Info: ESLint found but no config discovered — skipping lint diagnostics.'
+          );
+          this.eslintErrorNotified = true;
+        }
+        this.eslint = null;
+      } else if (!this.eslintErrorNotified) {
+        console.error(`Warning: ESLint failed on ${relativePath}: ${msg}`);
+        this.eslintErrorNotified = true;
+      }
+      return [];
+    }
   }
 
   private mapDiagnosticCategory(category: ts.DiagnosticCategory): DiagnosticSeverity {
@@ -509,16 +614,16 @@ export class TypeScriptLanguageService {
    * Bundles multiple analyses for a position into one call.
    * Useful for AI agents to get full context efficiently.
    */
-  analyzePosition(
+  async analyzePosition(
     filePath: string,
     line: number,
     column: number
-  ): PositionAnalysis {
+  ): Promise<PositionAnalysis> {
     return {
       hover: this.getHover(filePath, line, column),
       definition: this.getDefinition(filePath, line, column),
       references: this.getReferences(filePath, line, column),
-      diagnostics: this.getDiagnostics(filePath),
+      diagnostics: await this.getDiagnostics(filePath),
       signature: this.getSignature(filePath, line, column),
     };
   }
@@ -963,47 +1068,60 @@ export class TypeScriptLanguageService {
   /**
    * Returns diagnostics for all files in the project.
    */
-  getAllDiagnostics(severity?: DiagnosticSeverity): AllDiagnosticsResult {
-    const files: Record<string, Diagnostic[]> = {};
+  async getAllDiagnostics(
+    severity?: DiagnosticSeverity,
+    options?: { includeEslint?: boolean; limit?: number }
+  ): Promise<AllDiagnosticsResult> {
+    const includeEslint = options?.includeEslint ?? true;
+    const limit = clampLimit(options?.limit);
+
+    const all: Diagnostic[] = [];
+    for (const absolutePath of this.files.keys()) {
+      const relativePath = normalizePath(path.relative(this.projectRoot, absolutePath));
+      const diagnostics = await this.getDiagnostics(relativePath, {
+        includeEslint,
+        limit: MAX_DIAGNOSTICS_LIMIT,
+      });
+      for (const diag of diagnostics) {
+        if (severity && diag.severity !== severity) continue;
+        all.push(diag);
+      }
+    }
+
     const summary = {
       errors: 0,
       warnings: 0,
       suggestions: 0,
       messages: 0,
-      total: 0,
+      total: all.length,
+      returned: 0,
+      truncated: false,
     };
-
-    for (const absolutePath of this.files.keys()) {
-      const relativePath = normalizePath(path.relative(this.projectRoot, absolutePath));
-      const diagnostics = this.getDiagnostics(relativePath);
-
-      // Filter by severity if specified
-      const filtered = severity
-        ? diagnostics.filter(d => d.severity === severity)
-        : diagnostics;
-
-      if (filtered.length > 0) {
-        files[relativePath] = filtered;
+    for (const diag of all) {
+      switch (diag.severity) {
+        case 'error':
+          summary.errors++;
+          break;
+        case 'warning':
+          summary.warnings++;
+          break;
+        case 'suggestion':
+          summary.suggestions++;
+          break;
+        case 'message':
+          summary.messages++;
+          break;
       }
+    }
 
-      // Update summary counts
-      for (const diag of diagnostics) {
-        summary.total++;
-        switch (diag.severity) {
-          case 'error':
-            summary.errors++;
-            break;
-          case 'warning':
-            summary.warnings++;
-            break;
-          case 'suggestion':
-            summary.suggestions++;
-            break;
-          case 'message':
-            summary.messages++;
-            break;
-        }
-      }
+    const sorted = sortAndLimitDiagnostics(all, limit);
+    summary.returned = sorted.length;
+    summary.truncated = sorted.length < all.length;
+
+    const files: Record<string, Diagnostic[]> = {};
+    for (const diag of sorted) {
+      if (!files[diag.file]) files[diag.file] = [];
+      files[diag.file].push(diag);
     }
 
     return { files, summary };
@@ -1082,4 +1200,36 @@ export class TypeScriptLanguageService {
       };
     });
   }
+}
+
+function clampLimit(limit: number | undefined): number {
+  if (!Number.isFinite(limit) || limit === undefined) return DEFAULT_DIAGNOSTICS_LIMIT;
+  if (limit < 1) return 1;
+  if (limit > MAX_DIAGNOSTICS_LIMIT) return MAX_DIAGNOSTICS_LIMIT;
+  return Math.floor(limit);
+}
+
+function sortAndLimitDiagnostics(diagnostics: Diagnostic[], limit: number): Diagnostic[] {
+  const sorted = [...diagnostics].sort((a, b) => {
+    const sev = SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity];
+    if (sev !== 0) return sev;
+    if (a.file !== b.file) return a.file < b.file ? -1 : 1;
+    if (a.line !== b.line) return a.line - b.line;
+    return a.column - b.column;
+  });
+  return sorted.slice(0, limit);
+}
+
+function mapEslintMessage(msg: Linter.LintMessage, relativePath: string): Diagnostic {
+  const severity: DiagnosticSeverity = msg.severity === 2 ? 'error' : 'warning';
+  return {
+    file: relativePath,
+    line: Math.max(1, msg.line ?? 1),
+    column: Math.max(1, msg.column ?? 1),
+    message: msg.message,
+    code: msg.ruleId ?? 'eslint',
+    severity,
+    source: 'eslint',
+    ruleId: msg.ruleId ?? undefined,
+  };
 }

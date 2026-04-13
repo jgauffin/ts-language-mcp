@@ -41,6 +41,7 @@
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
+    "eslint": "^10.2.0",
     "vite-tsconfig-paths": "^6.0.4",
     "vitest": "^4.0.18"
   },
