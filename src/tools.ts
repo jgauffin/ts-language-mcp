@@ -1,6 +1,12 @@
 import type { TypeScriptLanguageService } from './language-service.js';
 import type { AstFinder } from './ast-finder.js';
-import type { FindParams, PositionParams, DiagnosticSeverity, FormatOptions } from './types.js';
+import type { FindParams, PositionParams, DiagnosticSeverity, FormatOptions, IndirectionHotspotsParams } from './types.js';
+import { ComplexityAnalyzer } from './analyzers/complexity-analyzer.js';
+import { CouplingAnalyzer } from './analyzers/coupling-analyzer.js';
+import { IndirectionAnalyzer } from './analyzers/indirection-analyzer.js';
+import { DuplicationDetector } from './analyzers/duplication-detector.js';
+import type { DuplicationOptions } from './analyzers/duplication-detector.js';
+import { toYaml } from './yaml.js';
 
 /**
  * Path utilities for cross-platform compatibility.
@@ -229,6 +235,42 @@ export const TOOL_SCHEMAS = {
     },
     required: ['query'],
   },
+
+  metricsParams: {
+    type: 'object',
+    properties: {
+      file: { type: 'string', description: 'Path to file (relative to project root). Omit for project-wide analysis.' },
+      topN: { type: 'number', description: 'Number of top hotspots to return (default: 20)' },
+    },
+  },
+
+  indirectionParams: {
+    type: 'object',
+    properties: {
+      maxDepth: { type: 'number', description: 'Max call chain depth to trace (default: 5).' },
+      minDirectCallers: { type: 'number', description: 'Minimum direct callers required to be a candidate (default: 3). Lower = more results but slower.' },
+      maxChainsPerOffender: { type: 'number', description: 'Max example chains to show per offender (default: 5).' },
+      take: { type: 'number', description: 'Number of results to return (default: 30).' },
+      skip: { type: 'number', description: 'Number of results to skip for pagination (default: 0).' },
+      includeTests: { type: 'boolean', description: 'Include test files in the analysis (default: false).' },
+    },
+  },
+
+  duplicationParams: {
+    type: 'object',
+    properties: {
+      file: { type: 'string', description: 'Path to file (relative to project root). Omit for project-wide analysis.' },
+      minNodes: { type: 'number', description: 'Minimum AST node count for a block to be considered (default: 20)' },
+      minStatements: { type: 'number', description: 'Minimum statements in a block (default: 3)' },
+    },
+  },
+
+  qualityReportParams: {
+    type: 'object',
+    properties: {
+      topN: { type: 'number', description: 'Number of worst offenders per category (default: 20)' },
+    },
+  },
 } as const;
 
 /**
@@ -377,6 +419,35 @@ export const TOOL_DEFINITIONS = [
         'Faster than the find tool for simple name lookups. Supports fuzzy matching.',
       inputSchema: TOOL_SCHEMAS.workspaceSymbolsParams,
     },
+    {
+      name: 'calculate_metrics',
+      description:
+        'Calculate code quality metrics: cyclomatic complexity per function, lines of code per function/file. ' +
+        'Identifies complexity hotspots. Omit "file" for project-wide analysis.',
+      inputSchema: TOOL_SCHEMAS.metricsParams,
+    },
+    {
+      name: 'find_indirection_hotspots',
+      description:
+        'Find symbols most heavily accessed through layers of indirection (A → B → C). ' +
+        'Returns worst offenders ranked by score with full call chains. ' +
+        'Useful for identifying hidden coupling and deeply wrapped dependencies.',
+      inputSchema: TOOL_SCHEMAS.indirectionParams,
+    },
+    {
+      name: 'detect_duplication',
+      description:
+        'Detect duplicate or near-duplicate code blocks by comparing AST structure fingerprints. ' +
+        'Finds structurally similar code regardless of variable names or literal values.',
+      inputSchema: TOOL_SCHEMAS.duplicationParams,
+    },
+    {
+      name: 'quality_report',
+      description:
+        'Combined code quality report: worst complexity hotspots, most coupled/unstable modules, ' +
+        'and duplicate code blocks — top offenders across all categories in one call.',
+      inputSchema: TOOL_SCHEMAS.qualityReportParams,
+    },
 ] as const;
 
 /**
@@ -387,9 +458,18 @@ export const TOOL_DEFINITIONS = [
  * const handler = new ToolHandler(languageService, astFinder);
  * const result = await handler.handleTool('get_hover', { file: 'src/index.ts', line: 10, column: 5 });
  */
+const JSON_TOOLS = new Set([
+  'format_document',
+  'get_completions',
+]);
+
 export class ToolHandler {
   private languageService: TypeScriptLanguageService;
   private astFinder: AstFinder;
+  private complexityAnalyzer: ComplexityAnalyzer;
+  private couplingAnalyzer: CouplingAnalyzer;
+  private indirectionAnalyzer: IndirectionAnalyzer;
+  private duplicationDetector: DuplicationDetector;
   private requestQueue: Promise<unknown> = Promise.resolve();
   private lastRefreshTime = 0;
   private static REFRESH_INTERVAL_MS = 2000;
@@ -397,6 +477,10 @@ export class ToolHandler {
   constructor(languageService: TypeScriptLanguageService, astFinder: AstFinder) {
     this.languageService = languageService;
     this.astFinder = astFinder;
+    this.complexityAnalyzer = new ComplexityAnalyzer(languageService);
+    this.couplingAnalyzer = new CouplingAnalyzer(languageService);
+    this.indirectionAnalyzer = new IndirectionAnalyzer(languageService);
+    this.duplicationDetector = new DuplicationDetector(languageService);
   }
 
   /**
@@ -454,9 +538,11 @@ export class ToolHandler {
     args: Record<string, unknown>
   ): Promise<{ content: Array<{ type: 'text'; text: string }>; isError?: boolean }> {
     try {
-      // Throttle file refresh to avoid re-walking the directory tree on every call
+      // Always refresh for diagnostic tools to avoid stale results;
+      // throttle other tools to avoid re-walking the directory tree on every call.
       const now = Date.now();
-      if (now - this.lastRefreshTime >= ToolHandler.REFRESH_INTERVAL_MS) {
+      const isDiagnostic = name === 'get_diagnostics' || name === 'get_all_diagnostics';
+      if (isDiagnostic || now - this.lastRefreshTime >= ToolHandler.REFRESH_INTERVAL_MS) {
         this.lastRefreshTime = now;
         this.languageService.refreshChangedFiles();
       }
@@ -475,8 +561,11 @@ export class ToolHandler {
       }
 
       const result = await this.dispatch(name, args);
+      const text = JSON_TOOLS.has(name)
+        ? JSON.stringify(result, null, 2)
+        : toYaml(result);
       return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        content: [{ type: 'text', text }],
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -558,6 +647,18 @@ export class ToolHandler {
 
       case 'get_workspace_symbols':
         return this.getWorkspaceSymbols(args as { query: string; maxResults?: number });
+
+      case 'calculate_metrics':
+        return this.calculateMetrics(args as { file?: string; topN?: number });
+
+      case 'find_indirection_hotspots':
+        return this.findIndirectionHotspots(args as IndirectionHotspotsParams);
+
+      case 'detect_duplication':
+        return this.detectDuplication(args as { file?: string; minNodes?: number; minStatements?: number });
+
+      case 'quality_report':
+        return this.qualityReport(args as { topN?: number });
 
       default:
         throw new Error(`Unknown tool: ${name}`);
@@ -751,5 +852,71 @@ export class ToolHandler {
   private getWorkspaceSymbols(params: { query: string; maxResults?: number }) {
     const result = this.languageService.getWorkspaceSymbols(params.query, params.maxResults);
     return { symbols: result, count: result.length };
+  }
+
+  private calculateMetrics(params: { file?: string; topN?: number }) {
+    if (params.file) {
+      return this.complexityAnalyzer.analyzeFile(params.file);
+    }
+    return this.complexityAnalyzer.analyzeProject({ topN: params.topN });
+  }
+
+  private findIndirectionHotspots(params: IndirectionHotspotsParams) {
+    return this.indirectionAnalyzer.analyze(params);
+  }
+
+  private detectDuplication(params: { file?: string; minNodes?: number; minStatements?: number }) {
+    const options: DuplicationOptions = {
+      minNodes: params.minNodes,
+      minStatements: params.minStatements,
+    };
+    if (params.file) {
+      return { groups: this.duplicationDetector.analyzeFile(params.file, options) };
+    }
+    return this.duplicationDetector.analyzeProject(options);
+  }
+
+  private qualityReport(params: { topN?: number }) {
+    const topN = params.topN ?? 20;
+
+    const complexity = this.complexityAnalyzer.analyzeProject({ topN });
+    const coupling = this.couplingAnalyzer.analyzeProject({ topN });
+    const duplication = this.duplicationDetector.analyzeProject();
+
+    const issues: { file: string; line?: number; category: string; detail: string }[] = [];
+
+    for (const f of complexity.mostComplexFunctions) {
+      issues.push({
+        file: f.file,
+        line: f.line,
+        category: 'complexity',
+        detail: `${f.name} — cyclomatic complexity ${f.cyclomaticComplexity}, ${f.linesOfCode} LOC`,
+      });
+    }
+
+    for (const f of coupling.mostUnstable) {
+      issues.push({
+        file: f.file,
+        category: 'coupling',
+        detail: `instability ${f.instability} (Ce=${f.efferentCoupling}, Ca=${f.afferentCoupling})`,
+      });
+    }
+
+    for (const g of duplication.groups) {
+      const locations = g.fragments.map(f => `${f.file}:${f.startLine}`).join(', ');
+      issues.push({
+        file: g.fragments[0].file,
+        line: g.fragments[0].startLine,
+        category: 'duplication',
+        detail: `${g.fragments.length} clones, ${g.fragments[0].linesOfCode} LOC each — ${locations}`,
+      });
+    }
+
+    return {
+      totalFiles: complexity.totalFiles,
+      totalFunctions: complexity.totalFunctions,
+      totalLOC: complexity.totalLOC,
+      issues,
+    };
   }
 }

@@ -1,8 +1,18 @@
 /// <reference types="vitest" />
 import * as path from 'path';
+import YAML from 'yaml';
 import { TypeScriptLanguageService } from '../src/language-service.js';
 import { AstFinder } from '../src/ast-finder.js';
 import { ToolHandler, TOOL_DEFINITIONS } from '../src/tools.js';
+
+/** Parse tool output — tries JSON first, falls back to YAML */
+function parse(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return YAML.parse(text);
+  }
+}
 
 const FIXTURE_PATH = path.join(__dirname, 'fixtures', 'sample-project');
 
@@ -65,7 +75,7 @@ describe('ToolHandler', () => {
       expect(result.isError).toBeUndefined();
       expect(result.content[0].type).toBe('text');
 
-      const parsed = JSON.parse(result.content[0].text);
+      const parsed = parse(result.content[0].text);
       expect(parsed.hover).toBeDefined();
     });
   });
@@ -80,7 +90,7 @@ describe('ToolHandler', () => {
 
       expect(result.isError).toBeUndefined();
 
-      const parsed = JSON.parse(result.content[0].text);
+      const parsed = parse(result.content[0].text);
       expect(parsed.definition === null || parsed.definition.file).toBeTruthy();
     });
   });
@@ -95,7 +105,7 @@ describe('ToolHandler', () => {
 
       expect(result.isError).toBeUndefined();
 
-      const parsed = JSON.parse(result.content[0].text);
+      const parsed = parse(result.content[0].text);
       expect(Array.isArray(parsed.references)).toBe(true);
     });
 
@@ -109,7 +119,7 @@ describe('ToolHandler', () => {
 
       expect(result.isError).toBeUndefined();
 
-      const parsed = JSON.parse(result.content[0].text);
+      const parsed = parse(result.content[0].text);
       expect(parsed.references.length).toBeGreaterThan(0);
 
       // Each reference should have a kind and isDefinition boolean
@@ -128,7 +138,7 @@ describe('ToolHandler', () => {
 
       expect(result.isError).toBeUndefined();
 
-      const parsed = JSON.parse(result.content[0].text);
+      const parsed = parse(result.content[0].text);
       expect(Array.isArray(parsed.diagnostics)).toBe(true);
     });
   });
@@ -141,7 +151,7 @@ describe('ToolHandler', () => {
 
       expect(result.isError).toBeUndefined();
 
-      const parsed = JSON.parse(result.content[0].text);
+      const parsed = parse(result.content[0].text);
       expect(Array.isArray(parsed.symbols)).toBe(true);
       expect(parsed.symbols.length).toBeGreaterThan(0);
     });
@@ -157,7 +167,7 @@ describe('ToolHandler', () => {
 
       expect(result.isError).toBeUndefined();
 
-      const parsed = JSON.parse(result.content[0].text);
+      const parsed = parse(result.content[0].text);
       expect(Array.isArray(parsed.completions)).toBe(true);
     });
   });
@@ -172,7 +182,7 @@ describe('ToolHandler', () => {
 
       expect(result.isError).toBeUndefined();
 
-      const parsed = JSON.parse(result.content[0].text);
+      const parsed = parse(result.content[0].text);
       expect(parsed.signature === null || typeof parsed.signature === 'object').toBe(
         true
       );
@@ -189,7 +199,7 @@ describe('ToolHandler', () => {
 
       expect(result.isError).toBeUndefined();
 
-      const parsed = JSON.parse(result.content[0].text);
+      const parsed = parse(result.content[0].text);
       // Analysis should return an object with these keys
       expect(typeof parsed).toBe('object');
       expect(parsed !== null).toBe(true);
@@ -204,7 +214,7 @@ describe('ToolHandler', () => {
 
       expect(result.isError).toBeUndefined();
 
-      const parsed = JSON.parse(result.content[0].text);
+      const parsed = parse(result.content[0].text);
       expect(Array.isArray(parsed.matches)).toBe(true);
       expect(typeof parsed.count).toBe('number');
       expect(parsed.count).toBe(parsed.matches.length);
@@ -220,7 +230,7 @@ describe('ToolHandler', () => {
 
       expect(result.isError).toBeUndefined();
 
-      const parsed = JSON.parse(result.content[0].text);
+      const parsed = parse(result.content[0].text);
       expect(parsed.matches.length).toBeGreaterThan(0);
       expect(parsed.matches[0].name).toContain('Service');
     });
@@ -234,7 +244,7 @@ describe('ToolHandler', () => {
 
       expect(result.isError).toBeUndefined();
 
-      const parsed = JSON.parse(result.content[0].text);
+      const parsed = parse(result.content[0].text);
       expect(Array.isArray(parsed.matches)).toBe(true);
       // Should find strings like 'admin', 'user', 'guest', error messages, etc.
       expect(parsed.matches.length).toBeGreaterThan(0);
@@ -250,7 +260,7 @@ describe('ToolHandler', () => {
 
       expect(result.isError).toBeUndefined();
 
-      const parsed = JSON.parse(result.content[0].text);
+      const parsed = parse(result.content[0].text);
       expect(Array.isArray(parsed.matches)).toBe(true);
       // user-service.ts has JSDoc comments
       expect(parsed.matches.length).toBeGreaterThan(0);
@@ -267,7 +277,7 @@ describe('ToolHandler', () => {
 
       expect(result.isError).toBeUndefined();
 
-      const parsed = JSON.parse(result.content[0].text);
+      const parsed = parse(result.content[0].text);
       expect(Array.isArray(parsed.matches)).toBe(true);
       // Should find comments containing "User"
       expect(parsed.matches.length).toBeGreaterThan(0);
@@ -285,7 +295,7 @@ describe('ToolHandler', () => {
 
       expect(result.isError).toBeUndefined();
 
-      const parsed = JSON.parse(result.content[0].text);
+      const parsed = parse(result.content[0].text);
       expect(Array.isArray(parsed.implementations)).toBe(true);
       expect(typeof parsed.count).toBe('number');
     });
@@ -299,7 +309,7 @@ describe('ToolHandler', () => {
 
       expect(result.isError).toBeUndefined();
 
-      const parsed = JSON.parse(result.content[0].text);
+      const parsed = parse(result.content[0].text);
       expect(Array.isArray(parsed.implementations)).toBe(true);
     });
   });
@@ -312,7 +322,7 @@ describe('ToolHandler', () => {
 
       expect(result.isError).toBeUndefined();
 
-      const parsed = JSON.parse(result.content[0].text);
+      const parsed = parse(result.content[0].text);
       expect(Array.isArray(parsed.imports)).toBe(true);
       expect(typeof parsed.count).toBe('number');
       expect(parsed.imports.length).toBeGreaterThan(0);
@@ -329,7 +339,7 @@ describe('ToolHandler', () => {
         file: 'src/handlers.ts',
       });
 
-      const parsed = JSON.parse(result.content[0].text);
+      const parsed = parse(result.content[0].text);
       const importWithNamed = parsed.imports.find(
         (i: { namedImports?: string[] }) => i.namedImports && i.namedImports.length > 0
       );
@@ -344,7 +354,7 @@ describe('ToolHandler', () => {
 
       expect(result.isError).toBeUndefined();
 
-      const parsed = JSON.parse(result.content[0].text);
+      const parsed = parse(result.content[0].text);
       expect(Array.isArray(parsed.imports)).toBe(true);
     });
   });
@@ -357,7 +367,7 @@ describe('ToolHandler', () => {
 
       expect(result.isError).toBeUndefined();
 
-      const parsed = JSON.parse(result.content[0].text);
+      const parsed = parse(result.content[0].text);
       expect(Array.isArray(parsed.outline)).toBe(true);
       expect(parsed.outline.length).toBeGreaterThan(0);
     });
@@ -367,7 +377,7 @@ describe('ToolHandler', () => {
         file: 'src/services/user-service.ts',
       });
 
-      const parsed = JSON.parse(result.content[0].text);
+      const parsed = parse(result.content[0].text);
       const item = parsed.outline[0];
 
       expect(item.name).toBeDefined();
@@ -383,7 +393,7 @@ describe('ToolHandler', () => {
         file: 'src/services/user-service.ts',
       });
 
-      const parsed = JSON.parse(result.content[0].text);
+      const parsed = parse(result.content[0].text);
       // Find the DefaultUserService class
       const classItem = parsed.outline.find(
         (item: { name: string }) => item.name === 'DefaultUserService'
@@ -407,7 +417,7 @@ describe('ToolHandler', () => {
 
       expect(result.isError).toBeUndefined();
 
-      const parsed = JSON.parse(result.content[0].text);
+      const parsed = parse(result.content[0].text);
       expect(Array.isArray(parsed.locations)).toBe(true);
       expect(typeof parsed.count).toBe('number');
     });
@@ -420,7 +430,7 @@ describe('ToolHandler', () => {
         newName: 'UserEntity',
       });
 
-      const parsed = JSON.parse(result.content[0].text);
+      const parsed = parse(result.content[0].text);
       if (parsed.locations.length > 0) {
         const location = parsed.locations[0];
         expect(location.originalText).toBeDefined();
@@ -443,7 +453,7 @@ describe('ToolHandler', () => {
 
       expect(result.isError).toBeUndefined();
 
-      const parsed = JSON.parse(result.content[0].text);
+      const parsed = parse(result.content[0].text);
       expect(Array.isArray(parsed.calls)).toBe(true);
       expect(typeof parsed.count).toBe('number');
     });
@@ -459,7 +469,7 @@ describe('ToolHandler', () => {
 
       expect(result.isError).toBeUndefined();
 
-      const parsed = JSON.parse(result.content[0].text);
+      const parsed = parse(result.content[0].text);
       expect(Array.isArray(parsed.calls)).toBe(true);
       expect(typeof parsed.count).toBe('number');
     });
@@ -472,7 +482,7 @@ describe('ToolHandler', () => {
         direction: 'incoming',
       });
 
-      const parsed = JSON.parse(result.content[0].text);
+      const parsed = parse(result.content[0].text);
       if (parsed.calls.length > 0) {
         const call = parsed.calls[0];
         expect(call.from || call.to).toBeDefined();
@@ -493,7 +503,7 @@ describe('ToolHandler', () => {
 
       expect(result.isError).toBeUndefined();
 
-      const parsed = JSON.parse(result.content[0].text);
+      const parsed = parse(result.content[0].text);
       expect(Array.isArray(parsed.types)).toBe(true);
       expect(typeof parsed.count).toBe('number');
     });
@@ -509,7 +519,7 @@ describe('ToolHandler', () => {
 
       expect(result.isError).toBeUndefined();
 
-      const parsed = JSON.parse(result.content[0].text);
+      const parsed = parse(result.content[0].text);
       expect(Array.isArray(parsed.types)).toBe(true);
       expect(typeof parsed.count).toBe('number');
     });
@@ -522,7 +532,7 @@ describe('ToolHandler', () => {
         direction: 'supertypes',
       });
 
-      const parsed = JSON.parse(result.content[0].text);
+      const parsed = parse(result.content[0].text);
       if (parsed.types.length > 0) {
         const typeItem = parsed.types[0];
         expect(typeItem.name).toBeDefined();
@@ -544,7 +554,7 @@ describe('ToolHandler', () => {
 
       expect(result.isError).toBeUndefined();
 
-      const parsed = JSON.parse(result.content[0].text);
+      const parsed = parse(result.content[0].text);
       expect(Array.isArray(parsed.results)).toBe(true);
       expect(parsed.results.length).toBe(2);
       expect(parsed.count).toBe(2);
@@ -555,7 +565,7 @@ describe('ToolHandler', () => {
         positions: [{ file: 'src/services/user-service.ts', line: 4, column: 18 }],
       });
 
-      const parsed = JSON.parse(result.content[0].text);
+      const parsed = parse(result.content[0].text);
       const analysis = parsed.results[0];
 
       expect(analysis.file).toBe('src/services/user-service.ts');
@@ -574,7 +584,7 @@ describe('ToolHandler', () => {
         include: ['hover', 'definition'],
       });
 
-      const parsed = JSON.parse(result.content[0].text);
+      const parsed = parse(result.content[0].text);
       const analysis = parsed.results[0];
 
       expect('hover' in analysis).toBe(true);
@@ -621,12 +631,12 @@ describe('ToolHandler', () => {
       expect(result.content[0].type).toBe('text');
     });
 
-    it('should return valid JSON in text', async () => {
+    it('should return parseable text output', async () => {
       const result = await handler.handleTool('get_symbols', {
         file: 'src/services/user-service.ts',
       });
 
-      expect(() => JSON.parse(result.content[0].text)).not.toThrow();
+      expect(() => parse(result.content[0].text)).not.toThrow();
     });
   });
 
@@ -674,7 +684,7 @@ describe('ToolHandler', () => {
       expect(errorResult.isError).toBeUndefined();
       expect(successResult.isError).toBeUndefined();
 
-      const parsed = JSON.parse(successResult.content[0].text);
+      const parsed = parse(successResult.content[0].text) as Record<string, unknown>;
       expect(Array.isArray(parsed.symbols)).toBe(true);
     });
   });
