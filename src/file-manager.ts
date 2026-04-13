@@ -18,9 +18,15 @@ export class FileManager {
   private static EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx'];
   private static SKIP_DIRS = ['node_modules', 'dist', 'build', 'coverage'];
 
-  constructor(projectRoot: string) {
+  constructor(projectRoot: string, initialFileNames?: string[] | null) {
     this.projectRoot = projectRoot;
-    this.indexProjectFiles();
+    if (initialFileNames && initialFileNames.length > 0) {
+      for (const fileName of initialFileNames) {
+        this.loadFile(fileName);
+      }
+    } else {
+      this.indexProjectFiles();
+    }
   }
 
   /**
