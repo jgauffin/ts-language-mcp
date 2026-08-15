@@ -3,6 +3,8 @@
 import * as path from 'path';
 import * as fs from 'fs';
 import { startServer, ServerOptions } from './server.js';
+import { getVersion } from './version.js';
+import { TOOL_DEFINITIONS } from './tools/index.js';
 
 /** Flags that take a value argument. */
 const VALUE_FLAGS = new Set(['--name', '--description']);
@@ -32,7 +34,7 @@ async function main(): Promise<void> {
   }
 
   if (args.includes('--version') || args.includes('-v')) {
-    console.log('ts-language-mcp v1.0.0');
+    console.log(`ts-language-mcp v${getVersion()}`);
     process.exit(0);
   }
 
@@ -111,15 +113,11 @@ EXAMPLES:
   ts-language-mcp /absolute/path      # Use absolute path
 
 MCP TOOLS:
-  get_hover           Type info at position
-  get_definition      Jump to definition
-  get_references      Find all usages
-  get_diagnostics     Get errors/warnings
-  get_symbols         List file symbols
-  get_completions     Code completions
-  get_signature       Function signature help
-  analyze_position    Combined analysis
-  find                AST-based search
+  ${TOOL_DEFINITIONS.length} tools across navigation, type intelligence, code structure,
+  semantic search, diagnostics, refactoring and code quality.
+  Names: ${TOOL_DEFINITIONS.map((t) => t.name).join(', ')}
+
+  See https://github.com/jgauffin/ts-language-mcp#tools for details.
 
 MCP RESOURCES:
   typescript://project/files    List project files

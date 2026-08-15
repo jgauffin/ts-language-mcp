@@ -1,7 +1,7 @@
 import ts from 'typescript';
 import { minimatch } from 'minimatch';
 import type { ProjectContext, FindParams, FindResult, SymbolKind } from './types.js';
-import { normalizePath, pathEndsWith, pathStartsWith } from './tools.js';
+import { normalizePath, pathEndsWith, pathStartsWith } from './paths.js';
 
 /**
  * Traverses TypeScript AST to find symbols matching search criteria.

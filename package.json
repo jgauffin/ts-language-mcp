@@ -1,6 +1,6 @@
 {
   "name": "ts-language-mcp",
-  "version": "1.2.0",
+  "version": "2.0.0",
   "description": "TypeScript Language Server exposed via MCP for AI agents",
   "author": "jgauffin",
   "license": "MIT",
@@ -49,6 +49,7 @@
   "files": [
     "dist",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "engines": {

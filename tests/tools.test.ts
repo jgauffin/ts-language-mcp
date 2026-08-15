@@ -3,7 +3,7 @@ import * as path from 'path';
 import YAML from 'yaml';
 import { TypeScriptLanguageService } from '../src/language-service.js';
 import { AstFinder } from '../src/ast-finder.js';
-import { ToolHandler, TOOL_DEFINITIONS } from '../src/tools.js';
+import { ToolHandler, TOOL_DEFINITIONS } from '../src/tools/index.js';
 
 /** Parse tool output — tries JSON first, falls back to YAML */
 function parse(text: string): unknown {
@@ -174,10 +174,11 @@ describe('ToolHandler', () => {
 
   describe('get_signature', () => {
     it('should return signature or null', async () => {
+      // Inside the parentheses of `this.users.get(id)` on line 56.
       const result = await handler.handleTool('get_signature', {
         file: 'src/services/user-service.ts',
-        line: 10,
-        column: 10,
+        line: 56,
+        column: 33,
       });
 
       expect(result.isError).toBeUndefined();
@@ -599,17 +600,18 @@ describe('ToolHandler', () => {
     it('should return error for unknown tool', async () => {
       const result = await handler.handleTool('unknown_tool', {});
 
-      expect(result.isError).toBeUndefined();
+      expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('Unknown tool');
     });
 
-    it('should handle missing file gracefully', async () => {
+    it('should flag a missing file as an error rather than a result', async () => {
       const result = await handler.handleTool('get_diagnostics', {
         file: 'non-existent-file.ts',
       });
 
-      // Should not throw, but may return empty or error
       expect(result.content[0].type).toBe('text');
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('File not found');
     });
   });
 
@@ -681,7 +683,7 @@ describe('ToolHandler', () => {
         handler.handleTool('get_symbols', { file: 'src/services/user-service.ts' }),
       ]);
 
-      expect(errorResult.isError).toBeUndefined();
+      expect(errorResult.isError).toBe(true);
       expect(successResult.isError).toBeUndefined();
 
       const parsed = parse(successResult.content[0].text) as Record<string, unknown>;

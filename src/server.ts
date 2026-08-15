@@ -8,9 +8,10 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { TypeScriptLanguageService } from './language-service.js';
 import { AstFinder } from './ast-finder.js';
-import { ToolHandler, TOOL_DEFINITIONS } from './tools.js';
+import { ToolHandler, TOOL_DEFINITIONS } from './tools/index.js';
 import { ResourceHandler } from './resources.js';
-import { normalizePath } from './tools.js';
+import { normalizePath } from './paths.js';
+import { getVersion } from './version.js';
 
 export interface ServerOptions {
   name?: string;
@@ -37,7 +38,7 @@ export function createServer(projectRoot?: string, options?: ServerOptions): Mcp
   const resourceHandler = new ResourceHandler(languageService);
   const serverInfo = {
     name: options?.name ?? 'ts-language-mcp',
-    version: '1.0.0',
+    version: getVersion(),
     ...(options?.description ? { description: options.description } : {}),
   };
 
@@ -77,6 +78,7 @@ export function createServer(projectRoot?: string, options?: ServerOptions): Mcp
       const message = error instanceof Error ? error.message : String(error);
       return {
         content: [{ type: 'text' as const, text: `Error: ${message}` }],
+        isError: true,
       };
     }
   });

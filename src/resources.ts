@@ -95,19 +95,20 @@ export class ResourceHandler {
         description: 'TypeScript compiler options from tsconfig.json',
         mimeType: 'application/json',
       },
+      {
+        uri: `${RESOURCE_URIS.FILE_PREFIX}{path}`,
+        name: 'Project File',
+        description:
+          'Contents of a single project file. Replace {path} with a project-relative ' +
+          'path, for example typescript://file/src/index.ts. Use the Project Files ' +
+          'resource to discover paths.',
+        mimeType: 'text/plain',
+      },
     ];
 
-    // Add individual file resources
-    const files = this.languageService.getProjectFiles();
-    for (const file of files) {
-      resources.push({
-        uri: `${RESOURCE_URIS.FILE_PREFIX}${file}`,
-        name: file,
-        description: `TypeScript source file: ${file}`,
-        mimeType: this.getMimeType(file),
-      });
-    }
-
+    // Individual files are addressable via the typescript://file/{path}
+    // template. Enumerating every one of them here would return a listing
+    // proportional to the size of the project on every resources/list call.
     return resources;
   }
 

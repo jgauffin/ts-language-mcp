@@ -98,10 +98,11 @@ describe('TypeScriptLanguageService', () => {
 
   describe('getReferences', () => {
     it('should find all usages of interface', () => {
-      // User interface - should be used multiple places
-      const refs = service.getReferences('src/services/user-service.ts', 12, 18);
+      // "User" interface is declared on line 13, column 18.
+      const refs = service.getReferences('src/services/user-service.ts', 13, 18);
 
       expect(refs.length).toBeGreaterThan(0);
+      expect(refs.some((r) => r.kind === 'definition')).toBe(true);
     });
 
     it('should include references from other files', () => {

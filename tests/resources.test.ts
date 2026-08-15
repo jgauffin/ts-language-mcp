@@ -30,13 +30,29 @@ describe('ResourceHandler', () => {
       expect(uris).toContain(RESOURCE_URIS.PROJECT_CONFIG);
     });
 
-    it('should list file resources', () => {
+    it('should advertise file access as a template rather than one entry per file', () => {
       const resources = handler.listResources();
 
       const fileResources = resources.filter((r) =>
         r.uri.startsWith(RESOURCE_URIS.FILE_PREFIX)
       );
-      expect(fileResources.length).toBeGreaterThan(0);
+
+      // A listing proportional to project size is a large payload returned on
+      // every resources/list call, so a single template stands in for it.
+      expect(fileResources).toHaveLength(1);
+      expect(fileResources[0].uri).toBe(`${RESOURCE_URIS.FILE_PREFIX}{path}`);
+    });
+
+    it('should expose exactly the three fixed resources', () => {
+      const resources = handler.listResources();
+
+      expect(resources.map((r) => r.uri).sort()).toEqual(
+        [
+          RESOURCE_URIS.PROJECT_FILES,
+          RESOURCE_URIS.PROJECT_CONFIG,
+          `${RESOURCE_URIS.FILE_PREFIX}{path}`,
+        ].sort()
+      );
     });
 
     it('should include descriptions', () => {

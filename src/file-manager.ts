@@ -1,6 +1,6 @@
 import * as path from 'path';
 import * as fs from 'fs';
-import { normalizePath } from './tools.js';
+import { normalizePath } from './paths.js';
 
 export interface FileEntry {
   content: string;
@@ -9,28 +9,45 @@ export interface FileEntry {
 }
 
 /**
+ * Supplies the set of files the project config currently declares.
+ * Returns null when the project has no tsconfig to scope it.
+ */
+export type ProjectFileResolver = () => string[] | null;
+
+/**
  * Manages the in-memory file cache for a TypeScript project.
  * Handles indexing, loading, refreshing, and change detection.
  */
 export class FileManager {
   private files: Map<string, FileEntry> = new Map();
   private projectRoot: string;
-  private static EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx'];
+  private resolveProjectFiles: ProjectFileResolver | null;
+  private static EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mts', '.cts', '.mjs', '.cjs'];
   private static SKIP_DIRS = ['node_modules', 'dist', 'build', 'coverage'];
 
-  constructor(projectRoot: string, initialFileNames?: string[] | null) {
+  constructor(projectRoot: string, resolveProjectFiles?: ProjectFileResolver) {
     this.projectRoot = projectRoot;
-    if (initialFileNames && initialFileNames.length > 0) {
-      for (const fileName of initialFileNames) {
-        this.loadFile(fileName);
-      }
+    this.resolveProjectFiles = resolveProjectFiles ?? null;
+
+    const configured = this.configuredFiles();
+    if (configured) {
+      this.syncToConfiguredFiles(configured);
     } else {
       this.indexProjectFiles();
     }
   }
 
   /**
+   * The file list declared by tsconfig, or null when there is none to honor.
+   */
+  private configuredFiles(): string[] | null {
+    const configured = this.resolveProjectFiles?.() ?? null;
+    return configured && configured.length > 0 ? configured : null;
+  }
+
+  /**
    * Indexes all TS/JS files in the project for analysis.
+   * Only used when the project has no tsconfig to scope it.
    */
   private indexProjectFiles(): void {
     this.walkDirectory(this.projectRoot, FileManager.EXTENSIONS);
@@ -74,6 +91,8 @@ export class FileManager {
 
   /**
    * Updates file content without disk I/O. Useful for unsaved changes.
+   * The zero mtime marks the entry as diverged from disk, so the next
+   * refresh reloads it.
    */
   updateFile(filePath: string, content: string): void {
     const absolutePath = path.resolve(this.projectRoot, filePath);
@@ -87,12 +106,38 @@ export class FileManager {
   }
 
   /**
-   * Re-reads any tracked files whose mtime has changed on disk.
-   * Also picks up new files and removes deleted ones.
+   * Writes file content to disk and updates the cache to match.
+   *
+   * Recording the post-write mtime is what stops the next refresh from
+   * mistaking our own write for an external edit and reloading over it.
+   */
+  writeFile(filePath: string, content: string): void {
+    const absolutePath = path.resolve(this.projectRoot, filePath);
+    fs.writeFileSync(absolutePath, content, 'utf-8');
+
+    const existing = this.files.get(absolutePath);
+    this.files.set(absolutePath, {
+      content,
+      version: (existing?.version ?? 0) + 1,
+      mtime: fs.statSync(absolutePath).mtimeMs,
+    });
+  }
+
+  /**
+   * Brings the cache back in line with disk.
+   *
+   * When tsconfig declares the file set, that declaration is authoritative:
+   * files it excludes must not be pulled in, because the compiler cannot
+   * produce source files for them and every program-backed API would fail.
    */
   refreshChangedFiles(): void {
-    const trackedPaths = Array.from(this.files.keys());
-    for (const absolutePath of trackedPaths) {
+    const configured = this.configuredFiles();
+    if (configured) {
+      this.syncToConfiguredFiles(configured);
+      return;
+    }
+
+    for (const absolutePath of Array.from(this.files.keys())) {
       try {
         if (!fs.existsSync(absolutePath)) {
           this.files.delete(absolutePath);
@@ -103,6 +148,35 @@ export class FileManager {
     }
 
     this.refreshDirectory(this.projectRoot, FileManager.EXTENSIONS);
+  }
+
+  /**
+   * Makes the cache hold exactly the configured files, reloading changed ones.
+   */
+  private syncToConfiguredFiles(fileNames: string[]): void {
+    const wanted = new Set(fileNames.map((f) => path.resolve(this.projectRoot, f)));
+
+    for (const absolutePath of Array.from(this.files.keys())) {
+      if (!wanted.has(absolutePath)) {
+        this.files.delete(absolutePath);
+      }
+    }
+
+    for (const absolutePath of wanted) {
+      const existing = this.files.get(absolutePath);
+      if (!existing) {
+        this.loadFile(absolutePath);
+        continue;
+      }
+
+      try {
+        if (fs.statSync(absolutePath).mtimeMs !== existing.mtime) {
+          this.loadFile(absolutePath);
+        }
+      } catch {
+        this.files.delete(absolutePath);
+      }
+    }
   }
 
   private refreshDirectory(dir: string, extensions: string[]): void {

@@ -126,18 +126,24 @@ export class IndirectionAnalyzer {
     for (const file of files) {
       if (!includeTests && isTestFile(file)) continue;
 
-      const outline = this.ls.getOutline(file);
-      this.collectSymbols(outline, file, undefined, symbols);
+      try {
+        const outline = this.ls.getOutline(file);
+        this.collectSymbols(outline, file, undefined, symbols);
+      } catch {
+        // A file the compiler cannot parse contributes no symbols, but must
+        // not abort the graph build for the whole project.
+        continue;
+      }
     }
 
     // Step 2: For each symbol, get outgoing calls to build edges
     for (const [key, sym] of symbols) {
-      const outgoing = this.ls.getCallHierarchy(
-        sym.file,
-        sym.line,
-        sym.column,
-        'outgoing',
-      );
+      let outgoing: ReturnType<TypeScriptLanguageService['getCallHierarchy']>;
+      try {
+        outgoing = this.ls.getCallHierarchy(sym.file, sym.line, sym.column, 'outgoing');
+      } catch {
+        continue;
+      }
 
       for (const call of outgoing) {
         if (!call.to) continue;

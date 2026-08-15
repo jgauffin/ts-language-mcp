@@ -1,5 +1,3 @@
-import type ts from 'typescript';
-
 /**
  * Minimal project interface for analyzers and AST tools.
  * Enables testing with in-memory implementations.
@@ -8,6 +6,42 @@ export interface ProjectContext {
   getProjectFiles(): string[];
   getFileContent(filePath: string): string | undefined;
   getProjectRoot(): string;
+  /**
+   * Resolves a module specifier to a project-relative file using the
+   * compiler's own resolution, which understands tsconfig "paths" aliases and
+   * package entry points that plain path matching cannot.
+   */
+  resolveModule?(specifier: string, containingFile: string): string | undefined;
+}
+
+// ── Module Dependency Types ──
+
+export interface ModuleDependency {
+  /** The specifier exactly as written in the source. */
+  module: string;
+  /** Project-relative path it resolves to, absent for unresolved specifiers. */
+  resolvedFile?: string;
+  /** True when the module lives outside the project, e.g. in node_modules. */
+  external: boolean;
+  line: number;
+  kind: 'import' | 'export' | 'dynamic-import' | 'require';
+}
+
+export interface ModuleDependents {
+  file: string;
+  line: number;
+  text?: string;
+}
+
+export interface ModuleDependenciesResult {
+  file: string;
+  imports?: ModuleDependency[];
+  importedBy?: ModuleDependents[];
+  metrics: {
+    efferentCoupling: number;
+    afferentCoupling: number;
+    instability: number;
+  };
 }
 
 // ── Complexity Analysis Types ──
@@ -118,6 +152,10 @@ export interface DuplicateGroup {
   hash: string;
   nodeKind: string;
   fragments: DuplicateFragment[];
+  /**
+   * Always 1: fragments are grouped by an exact structural hash, so every
+   * member of a group has identical structure. This is not a similarity score.
+   */
   similarity: number;
 }
 
@@ -171,14 +209,11 @@ export interface FilePosition {
   file: string;
   line: number;
   column: number;
-}
-
-/**
- * A span of text in a source file.
- */
-export interface FileSpan extends FilePosition {
-  endLine: number;
-  endColumn: number;
+  /**
+   * The source line, trimmed. Carrying it here spares the caller a file read
+   * just to see what the position actually points at.
+   */
+  text?: string;
 }
 
 /**
@@ -278,7 +313,6 @@ export interface CompletionItem {
   kind: string;
   sortText?: string;
   insertText?: string;
-  documentation?: string;
 }
 
 /**
@@ -309,7 +343,7 @@ export interface PositionAnalysis {
 /**
  * Kind of reference to a symbol.
  */
-export type ReferenceKind = 'definition' | 'read' | 'write' | 'implementation';
+export type ReferenceKind = 'definition' | 'read' | 'write';
 
 /**
  * Extended reference info with kind.
@@ -317,6 +351,8 @@ export type ReferenceKind = 'definition' | 'read' | 'write' | 'implementation';
 export interface ReferenceInfo extends FilePosition {
   kind: ReferenceKind;
   isDefinition: boolean;
+  /** Surrounding source lines, present only when contextLines was requested. */
+  context?: { startLine: number; lines: string[] };
 }
 
 /**
@@ -346,10 +382,17 @@ export interface OutlineItem {
 
 /**
  * A location that would be renamed.
+ *
+ * TypeScript supplies prefixText/suffixText where a bare substitution would
+ * change meaning. The clearest case is a shorthand property: renaming the
+ * binding in `{ timeout }` yields prefixText "timeout: " so the object keeps
+ * its key. Anyone applying these edits by hand needs them too.
  */
 export interface RenameLocation extends FilePosition {
   originalText: string;
   newText: string;
+  prefixText?: string;
+  suffixText?: string;
 }
 
 /**
@@ -363,6 +406,7 @@ export interface CallHierarchyItem {
   column: number;
   selectionLine: number;
   selectionColumn: number;
+  text?: string;
 }
 
 /**
@@ -383,14 +427,7 @@ export interface TypeHierarchyItem {
   file: string;
   line: number;
   column: number;
-}
-
-/**
- * Parameters for batch_analyze tool.
- */
-export interface BatchAnalyzeParams {
-  positions: PositionParams[];
-  include?: Array<'hover' | 'definition' | 'references' | 'diagnostics' | 'signature'>;
+  text?: string;
 }
 
 /**
@@ -416,6 +453,10 @@ export interface AllDiagnosticsResult {
     returned: number;
     truncated: boolean;
   };
+  /** Compiler option problems; present only when tsconfig has errors. */
+  config?: Diagnostic[];
+  /** Files the compiler could not analyse; present only when some were skipped. */
+  skippedFiles?: string[];
 }
 
 /**
@@ -442,7 +483,52 @@ export interface FormatOptions {
 export interface FormatResult {
   formatted: boolean;
   changeCount: number;
+  file: string;
+  /** Only present when the caller asked for it; the file itself is on disk. */
   content?: string;
+}
+
+/**
+ * A single text replacement, expressed in 1-based line/column so an agent
+ * can read it without doing offset arithmetic.
+ */
+export interface TextEdit {
+  line: number;
+  column: number;
+  endLine: number;
+  endColumn: number;
+  newText: string;
+}
+
+/** Edits grouped by the file they apply to. */
+export interface FileEdits {
+  file: string;
+  edits: TextEdit[];
+}
+
+/**
+ * A fix TypeScript itself proposes for a diagnostic, such as adding a missing
+ * import or removing unused code.
+ */
+export interface CodeFix {
+  fixName: string;
+  description: string;
+  /** Present when the same fix can be applied to every occurrence in the file. */
+  fixAllDescription?: string;
+  changes: FileEdits[];
+}
+
+/** Result of applying a code fix or organizing imports. */
+export interface ApplyEditsResult {
+  applied: boolean;
+  filesModified: string[];
+  totalEdits: number;
+  description?: string;
+}
+
+/** Result of organize_imports, which can preview or apply. */
+export interface OrganizeImportsResult extends ApplyEditsResult {
+  changes: FileEdits[];
 }
 
 /**
@@ -455,25 +541,6 @@ export interface WorkspaceSymbol {
   line: number;
   column: number;
   containerName?: string;
+  text?: string;
 }
 
-/**
- * Maps SymbolKind to TypeScript SyntaxKind values.
- * Used internally by ast-finder to filter nodes.
- */
-export const SYMBOL_KIND_TO_SYNTAX: Record<SymbolKind, ts.SyntaxKind[]> = {
-  function: [256, 259, 218, 219], // FunctionDeclaration, FunctionExpression, ArrowFunction
-  class: [263],
-  interface: [264],
-  type: [265],
-  enum: [266],
-  variable: [260],
-  const: [260], // Differentiated by flag check
-  property: [172, 303],
-  method: [174, 173],
-  parameter: [169],
-  import: [272, 273],
-  export: [277, 278],
-  string: [11, 15, 228], // StringLiteral, NoSubstitutionTemplateLiteral, TemplateExpression
-  comment: [], // Comments are trivia, handled specially in ast-finder
-};

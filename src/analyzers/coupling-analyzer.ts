@@ -109,8 +109,16 @@ export class CouplingAnalyzer {
       const resolvedDeps: string[] = [];
 
       for (const specifier of imports) {
+        // The compiler's own resolution understands tsconfig "paths" aliases
+        // and package entry points; the path matching below cannot, and is
+        // kept only for contexts that supply no resolver.
+        const compilerResolved = this.context.resolveModule?.(specifier, filePath);
+        if (compilerResolved) {
+          if (compilerResolved !== filePath) resolvedDeps.push(compilerResolved);
+          continue;
+        }
+
         if (specifier.startsWith('.')) {
-          // Relative import — resolve against file's directory
           const fileDir = path.dirname(filePath);
           const resolved = path.posix.normalize(path.posix.join(fileDir, specifier));
           const target = this.resolveToProjectFile(resolved, projectFileSet, projectFileStemsMap);
