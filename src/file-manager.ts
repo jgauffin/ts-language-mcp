@@ -1,8 +1,11 @@
 import * as path from 'path';
 import * as fs from 'fs';
+import * as ts from 'typescript';
 import { normalizePath } from './paths.js';
 
 export interface FileEntry {
+  /** Absolute path with forward slashes, in the casing the file has on disk. */
+  fileName: string;
   content: string;
   version: number;
   mtime: number;
@@ -24,6 +27,19 @@ export class FileManager {
   private resolveProjectFiles: ProjectFileResolver | null;
   private static EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mts', '.cts', '.mjs', '.cjs'];
   private static SKIP_DIRS = ['node_modules', 'dist', 'build', 'coverage'];
+
+  /**
+   * The cache key for a file, in whatever spelling the caller used.
+   *
+   * TypeScript hands its host forward-slash paths, callers hand us relative
+   * ones and Windows hands us backslashes. All three name the same file, so
+   * they have to collapse to one key: a key miss makes getScriptVersion
+   * answer "unchanged" forever and freezes the compiler on startup text.
+   */
+  private cacheKey(filePath: string): string {
+    const absolute = normalizePath(path.resolve(this.projectRoot, filePath));
+    return ts.sys.useCaseSensitiveFileNames ? absolute : absolute.toLowerCase();
+  }
 
   constructor(projectRoot: string, resolveProjectFiles?: ProjectFileResolver) {
     this.projectRoot = projectRoot;
@@ -80,9 +96,11 @@ export class FileManager {
 
     const content = fs.readFileSync(absolutePath, 'utf-8');
     const mtime = fs.statSync(absolutePath).mtimeMs;
-    const existing = this.files.get(absolutePath);
+    const key = this.cacheKey(absolutePath);
+    const existing = this.files.get(key);
 
-    this.files.set(absolutePath, {
+    this.files.set(key, {
+      fileName: normalizePath(absolutePath),
       content,
       version: (existing?.version ?? 0) + 1,
       mtime,
@@ -96,9 +114,11 @@ export class FileManager {
    */
   updateFile(filePath: string, content: string): void {
     const absolutePath = path.resolve(this.projectRoot, filePath);
-    const existing = this.files.get(absolutePath);
+    const key = this.cacheKey(absolutePath);
+    const existing = this.files.get(key);
 
-    this.files.set(absolutePath, {
+    this.files.set(key, {
+      fileName: normalizePath(absolutePath),
       content,
       version: (existing?.version ?? 0) + 1,
       mtime: 0, // In-memory update, no disk mtime
@@ -115,8 +135,10 @@ export class FileManager {
     const absolutePath = path.resolve(this.projectRoot, filePath);
     fs.writeFileSync(absolutePath, content, 'utf-8');
 
-    const existing = this.files.get(absolutePath);
-    this.files.set(absolutePath, {
+    const key = this.cacheKey(absolutePath);
+    const existing = this.files.get(key);
+    this.files.set(key, {
+      fileName: normalizePath(absolutePath),
       content,
       version: (existing?.version ?? 0) + 1,
       mtime: fs.statSync(absolutePath).mtimeMs,
@@ -137,13 +159,13 @@ export class FileManager {
       return;
     }
 
-    for (const absolutePath of Array.from(this.files.keys())) {
+    for (const [key, entry] of Array.from(this.files.entries())) {
       try {
-        if (!fs.existsSync(absolutePath)) {
-          this.files.delete(absolutePath);
+        if (!fs.existsSync(entry.fileName)) {
+          this.files.delete(key);
         }
       } catch {
-        this.files.delete(absolutePath);
+        this.files.delete(key);
       }
     }
 
@@ -154,16 +176,18 @@ export class FileManager {
    * Makes the cache hold exactly the configured files, reloading changed ones.
    */
   private syncToConfiguredFiles(fileNames: string[]): void {
-    const wanted = new Set(fileNames.map((f) => path.resolve(this.projectRoot, f)));
+    const wanted = new Map(
+      fileNames.map((f) => [this.cacheKey(f), path.resolve(this.projectRoot, f)])
+    );
 
-    for (const absolutePath of Array.from(this.files.keys())) {
-      if (!wanted.has(absolutePath)) {
-        this.files.delete(absolutePath);
+    for (const key of Array.from(this.files.keys())) {
+      if (!wanted.has(key)) {
+        this.files.delete(key);
       }
     }
 
-    for (const absolutePath of wanted) {
-      const existing = this.files.get(absolutePath);
+    for (const [key, absolutePath] of wanted) {
+      const existing = this.files.get(key);
       if (!existing) {
         this.loadFile(absolutePath);
         continue;
@@ -174,7 +198,7 @@ export class FileManager {
           this.loadFile(absolutePath);
         }
       } catch {
-        this.files.delete(absolutePath);
+        this.files.delete(key);
       }
     }
   }
@@ -196,7 +220,7 @@ export class FileManager {
         }
       } else if (extensions.some((ext) => entry.name.endsWith(ext))) {
         try {
-          const existing = this.files.get(fullPath);
+          const existing = this.files.get(this.cacheKey(fullPath));
           if (!existing) {
             this.loadFile(fullPath);
           } else {
@@ -206,7 +230,7 @@ export class FileManager {
             }
           }
         } catch {
-          this.files.delete(fullPath);
+          this.files.delete(this.cacheKey(fullPath));
         }
       }
     }
@@ -216,16 +240,15 @@ export class FileManager {
    * Returns file content if loaded.
    */
   getFileContent(filePath: string): string | undefined {
-    const absolutePath = path.resolve(this.projectRoot, filePath);
-    return this.files.get(absolutePath)?.content;
+    return this.files.get(this.cacheKey(filePath))?.content;
   }
 
   /**
    * Returns all indexed file paths (relative to project root).
    */
   getProjectFiles(): string[] {
-    return Array.from(this.files.keys()).map((f) =>
-      normalizePath(path.relative(this.projectRoot, f))
+    return Array.from(this.files.values()).map((entry) =>
+      normalizePath(path.relative(this.projectRoot, entry.fileName))
     );
   }
 
@@ -233,29 +256,31 @@ export class FileManager {
    * Returns the raw file entry (content + version + mtime) for a file.
    */
   getFileEntry(filePath: string): FileEntry | undefined {
-    const absolutePath = path.resolve(this.projectRoot, filePath);
-    return this.files.get(absolutePath);
+    return this.files.get(this.cacheKey(filePath));
   }
 
   /**
    * Returns all absolute file paths tracked by the manager.
    */
   getAbsolutePaths(): string[] {
-    return Array.from(this.files.keys());
+    return Array.from(this.files.values()).map((entry) => entry.fileName);
   }
 
   /**
    * Returns the script version string for a file (used by LanguageServiceHost).
    */
   getScriptVersion(fileName: string): string {
-    return this.files.get(fileName)?.version.toString() ?? '0';
+    return this.files.get(this.cacheKey(fileName))?.version.toString() ?? '0';
   }
 
   /**
    * Returns a TypeScript ScriptSnapshot for a file, falling back to disk.
+   *
+   * The fallback serves the compiler's own lib files, which are outside the
+   * project and never tracked here.
    */
   getScriptSnapshot(fileName: string): string | undefined {
-    const file = this.files.get(fileName);
+    const file = this.files.get(this.cacheKey(fileName));
     if (file) return file.content;
 
     if (fs.existsSync(fileName)) {

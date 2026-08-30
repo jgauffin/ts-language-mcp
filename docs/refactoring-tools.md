@@ -145,9 +145,19 @@ filesModified:
  - src/services/user-service.ts
  - src/handlers.ts
 totalChanges: 7
+changes:
+ - file: src/services/user-service.ts
+   changes: 2
+ - file: src/handlers.ts
+   changes: 5
 ```
 
 Shorthand properties and aliased imports are handled correctly.
+
+The rename is all or nothing. Every file is rewritten in memory and each span is
+checked to still hold the old name before anything reaches disk, so a rename that
+cannot be applied cleanly writes nothing and returns `success: false` with a
+`reason`.
 
 ---
 

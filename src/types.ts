@@ -431,12 +431,25 @@ export interface TypeHierarchyItem {
 }
 
 /**
+ * How many occurrences a rename replaced in one file.
+ */
+export interface RenameFileChange {
+  file: string;
+  changes: number;
+}
+
+/**
  * Result of applying a rename operation.
+ *
+ * A rename is all or nothing: on failure nothing is written and `reason` says
+ * what stopped it.
  */
 export interface RenameResult {
   success: boolean;
   filesModified: string[];
   totalChanges: number;
+  changes: RenameFileChange[];
+  reason?: string;
 }
 
 /**

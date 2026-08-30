@@ -19,6 +19,7 @@ export const refactoringTools: ToolModule = {
       description:
         'Rename a symbol across the project, writing the changes to disk. ' +
         'Handles shorthand properties and aliased imports correctly. ' +
+        'All or nothing: on failure nothing is written and the reason is returned. ' +
         'Returns summary of files modified and total changes made.' + BY_SYMBOL_NOTE,
       inputSchema: TOOL_SCHEMAS.renameParams,
     },

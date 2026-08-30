@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-08-30
+
+### Fixed
+
+- **The compiler no longer answers from the text a file had at startup.** The
+  file cache was keyed by native path (`C:\src\app.ts`) while TypeScript asked
+  its host with the normalized form (`C:/src/app.ts`), so every key lookup
+  missed: `getScriptVersion` reported "unchanged" forever and no file was ever
+  re-parsed after an edit, ours or an editor's. Positions were computed from the
+  current file and spans from the stale parse, which drifted by the length of
+  every edit in between. A second `rename_symbol` in one session wrote its edits
+  at those offsets and shredded the file while reporting success. Diagnostics,
+  references and definitions were stale from the first write onwards.
+
+### Added
+
+- `rename_symbol` verifies every span still holds the old name before anything
+  reaches disk. The rename is all or nothing: on failure nothing is written and
+  the result carries `reason` explaining what stopped it.
+- `RenameResult` gained `changes`, the per-file occurrence counts behind
+  `totalChanges`.
+
 ## [2.0.0] - 2026-08-15
 
 A release focused on agent accuracy: removing the places where the server
@@ -159,7 +181,8 @@ Initial release: TypeScript language intelligence exposed over MCP, covering
 navigation, type information, code structure, semantic search, diagnostics,
 renames and formatting.
 
-[Unreleased]: https://github.com/jgauffin/ts-language-mcp/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/jgauffin/ts-language-mcp/compare/v2.1.0...HEAD
+[2.1.0]: https://github.com/jgauffin/ts-language-mcp/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/jgauffin/ts-language-mcp/compare/6ac6ec7...v2.0.0
 [1.2.0]: https://github.com/jgauffin/ts-language-mcp/compare/v1.1.0...6ac6ec7
 [1.1.0]: https://github.com/jgauffin/ts-language-mcp/compare/v1.0.1...v1.1.0

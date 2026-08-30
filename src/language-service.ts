@@ -18,6 +18,7 @@ import type {
   RenameLocation,
   CallHierarchyCall,
   TypeHierarchyItem,
+  RenameFileChange,
   RenameResult,
   AllDiagnosticsResult,
   FormatOptions,
@@ -958,10 +959,10 @@ export class TypeScriptLanguageService implements ProjectContext {
     column: number,
     newName: string
   ): RenameResult {
-    const { locations } = this.findRawRenameLocations(filePath, line, column);
+    const { locations, displayName } = this.findRawRenameLocations(filePath, line, column);
 
     if (locations.length === 0) {
-      return { success: false, filesModified: [], totalChanges: 0 };
+      return this.renameFailure(`No symbol that can be renamed at ${filePath}:${line}:${column}`);
     }
 
     const changesByFile = new Map<string, ts.RenameLocation[]>();
@@ -971,12 +972,17 @@ export class TypeScriptLanguageService implements ProjectContext {
       changesByFile.set(loc.fileName, existing);
     }
 
-    const filesModified: string[] = [];
+    // Every file is rewritten in memory and checked before anything reaches
+    // disk, so a rename that cannot be applied cleanly leaves no half-renamed
+    // project behind.
+    const rewritten: Array<RenameFileChange & { content: string }> = [];
 
     for (const [absolutePath, fileLocations] of changesByFile) {
       const relativePath = normalizePath(path.relative(this.projectRoot, absolutePath));
       const content = this.fileManager.getFileContent(relativePath);
-      if (content === undefined) continue;
+      if (content === undefined) {
+        return this.renameFailure(`${relativePath} holds occurrences but is not loaded`);
+      }
 
       // Apply back to front so earlier spans keep their offsets. Working from
       // the compiler's own spans avoids re-deriving positions from line/column.
@@ -986,19 +992,47 @@ export class TypeScriptLanguageService implements ProjectContext {
       for (const loc of sorted) {
         const start = loc.textSpan.start;
         const end = start + loc.textSpan.length;
+
+        const found = content.substring(start, end);
+        if (!this.spanHoldsName(found, displayName)) {
+          const pos = this.toLineColumn(loc.fileName, start);
+          return this.renameFailure(
+            `Compiler offsets do not match the file: expected "${displayName}" at ` +
+              `${relativePath}:${pos.line}:${pos.column} but found "${found}". Nothing was written.`
+          );
+        }
+
         const replacement = `${loc.prefixText ?? ''}${newName}${loc.suffixText ?? ''}`;
         result = result.substring(0, start) + replacement + result.substring(end);
       }
 
-      this.fileManager.writeFile(relativePath, result);
-      filesModified.push(relativePath);
+      rewritten.push({ file: relativePath, changes: fileLocations.length, content: result });
+    }
+
+    for (const file of rewritten) {
+      this.fileManager.writeFile(file.file, file.content);
     }
 
     return {
       success: true,
-      filesModified,
+      filesModified: rewritten.map((f) => f.file),
       totalChanges: locations.length,
+      changes: rewritten.map((f) => ({ file: f.file, changes: f.changes })),
     };
+  }
+
+  private renameFailure(reason: string): RenameResult {
+    return { success: false, filesModified: [], totalChanges: 0, changes: [], reason };
+  }
+
+  /**
+   * Quoted member names (`{ "foo-bar": 1 }`) come back with the quotes in the
+   * span but without them in the display name.
+   */
+  private spanHoldsName(spanText: string, displayName: string): boolean {
+    if (spanText === displayName) return true;
+    const unquoted = spanText.replace(/^['"`]|['"`]$/g, '');
+    return unquoted === displayName;
   }
 
   /**
