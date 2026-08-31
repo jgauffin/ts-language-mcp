@@ -1,4 +1,5 @@
 import type { TypeScriptLanguageService } from '../language-service.js';
+import type { ProjectRegistry } from '../project-registry.js';
 import type { AstFinder } from '../ast-finder.js';
 import { ComplexityAnalyzer } from '../analyzers/complexity-analyzer.js';
 import { CouplingAnalyzer } from '../analyzers/coupling-analyzer.js';
@@ -73,6 +74,17 @@ export class ToolHandler {
   }
 
   /**
+   * The language service as a registry, when it is one. Lets the handler warn
+   * about files no tsconfig governs without requiring a registry to be used.
+   */
+  private registry(): ProjectRegistry | undefined {
+    const service = this.context.languageService as Partial<ProjectRegistry>;
+    return typeof service.isFileUnconfigured === 'function'
+      ? (service as ProjectRegistry)
+      : undefined;
+  }
+
+  /**
    * Replaces a "symbol" argument with the concrete position it names.
    * Runs before validation so downstream handlers only ever see coordinates.
    */
@@ -104,6 +116,13 @@ export class ToolHandler {
         `Use the "get_workspace_symbols" tool or "typescript://project/files" resource to discover files.`
       );
     }
+
+    // A file that exists but sits outside every tsconfig is a different
+    // problem from a missing one, and saying "not found" for it sends the
+    // caller hunting a typo that is not there. The registry analyses it under
+    // inferred options and the caller is warned, so this is not a failure.
+    const registry = this.registry();
+    if (registry?.fileExistsOnDisk(file)) return;
 
     // Check if the file exists in the project
     if (!this.context.languageService.getFileContent(file)) {
@@ -205,9 +224,10 @@ export class ToolHandler {
       }
 
       const result = await this.dispatch(name, resolvedArgs);
+      const annotated = this.withUnconfiguredWarning(result, resolvedArgs);
       const text = JSON_TOOLS.has(name)
-        ? JSON.stringify(result, null, 2)
-        : toYaml(result);
+        ? JSON.stringify(annotated, null, 2)
+        : toYaml(annotated);
       return {
         content: [{ type: 'text', text }],
       };
@@ -220,6 +240,27 @@ export class ToolHandler {
         isError: true,
       };
     }
+  }
+
+  /**
+   * Marks a result that was produced without a governing tsconfig, so an agent
+   * can weigh unresolved-name errors instead of taking them at face value.
+   *
+   * Rides with the result rather than replacing it: the analysis is still the
+   * best available answer, it just rests on inferred options.
+   */
+  private withUnconfiguredWarning(result: unknown, args: Record<string, unknown>): unknown {
+    const file = args.file;
+    if (typeof file !== 'string') return result;
+
+    const registry = this.registry();
+    if (!registry?.isFileUnconfigured(file)) return result;
+
+    const warning = registry.unconfiguredWarning(file);
+    if (result === null || result === undefined) return { warning };
+    if (Array.isArray(result)) return { warning, results: result };
+    if (typeof result === 'object') return { warning, ...(result as object) };
+    return { warning, result };
   }
 
   private dispatch(name: string, args: Record<string, unknown>): unknown | Promise<unknown> {

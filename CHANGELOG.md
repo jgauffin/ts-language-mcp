@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-08-31
+
+### Fixed
+
+- **Each file is now checked against the tsconfig that actually governs it.**
+  The server read only `<root>/tsconfig.json` and never looked for a nested one,
+  so a `tests/tsconfig.json` — the ordinary, framework-agnostic way a project
+  declares its test runner's globals via `"types"` — was ignored entirely. Files
+  it governs were either checked under the wrong compiler options, reporting
+  every runner global as an undefined name, or excluded from the project
+  outright.
+- **A file outside the project is no longer reported as missing.** Asking about
+  a file the root tsconfig excludes returned `File not found: "tests/foo.test.ts"`
+  for a file plainly on disk. The message named the wrong cause, so the honest
+  conclusion was that the path was wrong or the analyzer was unreliable — when
+  the real cause was tsconfig scope. Such a file is now analysed and the result
+  says so.
+
+### Added
+
+- Results for a file no tsconfig covers carry a `warning` naming the nearest
+  config and how to bring the file into it. Unresolved-name errors are worth
+  less when the options were inferred, and the caller now knows which case they
+  are looking at rather than having to guess.
+
+### Notes
+
+- Diagnostics that TypeScript genuinely reports are unchanged. Where a project's
+  own config omits its runner's types, the errors still match `tsc --noEmit`
+  exactly; they are real config problems and are not suppressed.
+- Directories holding test fixtures (`fixtures`, `__fixtures__`, `testdata`,
+  `__mocks__`) are skipped when discovering configs, so sample projects belonging
+  to a test suite stay out of project-wide reports.
+
 ## [2.1.0] - 2026-08-30
 
 ### Fixed
@@ -181,7 +215,8 @@ Initial release: TypeScript language intelligence exposed over MCP, covering
 navigation, type information, code structure, semantic search, diagnostics,
 renames and formatting.
 
-[Unreleased]: https://github.com/jgauffin/ts-language-mcp/compare/v2.1.0...HEAD
+[Unreleased]: https://github.com/jgauffin/ts-language-mcp/compare/v2.2.0...HEAD
+[2.2.0]: https://github.com/jgauffin/ts-language-mcp/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/jgauffin/ts-language-mcp/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/jgauffin/ts-language-mcp/compare/6ac6ec7...v2.0.0
 [1.2.0]: https://github.com/jgauffin/ts-language-mcp/compare/v1.1.0...6ac6ec7

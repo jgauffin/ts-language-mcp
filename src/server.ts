@@ -6,7 +6,7 @@ import {
   ListResourcesRequestSchema,
   ReadResourceRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
-import { TypeScriptLanguageService } from './language-service.js';
+import { ProjectRegistry } from './project-registry.js';
 import { AstFinder } from './ast-finder.js';
 import { ToolHandler, TOOL_DEFINITIONS } from './tools/index.js';
 import { ResourceHandler } from './resources.js';
@@ -32,7 +32,9 @@ export interface ServerOptions {
 export function createServer(projectRoot?: string, options?: ServerOptions): McpServer {
   const resolvedRoot = projectRoot ?? process.cwd();
   const normalizedRoot = normalizePath(resolvedRoot);
-  const languageService = new TypeScriptLanguageService(resolvedRoot);
+  // A registry rather than a single service, so files governed by a nested
+  // tsconfig (tests being the common case) are checked under their own config.
+  const languageService = new ProjectRegistry(resolvedRoot);
   const astFinder = new AstFinder(languageService);
   const toolHandler = new ToolHandler(languageService, astFinder);
   const resourceHandler = new ResourceHandler(languageService);

@@ -61,12 +61,22 @@ export class TypeScriptLanguageService implements ProjectContext {
   private projectRoot: string;
   private compilerOptions: ts.CompilerOptions;
   private tsConfigFileNames: string[] | null;
+  private configPath: string;
   private eslint: ESLint | null = null;
   private eslintNotified = false;
   private eslintErrorNotified = false;
 
-  constructor(projectRoot: string) {
+  /**
+   * @param projectRoot - Directory the file set is resolved and reported against.
+   * @param configPath - The tsconfig governing this project. Defaults to the
+   *   one in the project root; a nested config (for example tests/tsconfig.json)
+   *   is passed explicitly so its files are checked under its own options.
+   */
+  constructor(projectRoot: string, configPath?: string) {
     this.projectRoot = path.resolve(projectRoot).replace(/[\\\/]+$/, '');
+    this.configPath = configPath
+      ? path.resolve(configPath)
+      : path.join(this.projectRoot, 'tsconfig.json');
     const config = this.loadProjectConfig();
     this.compilerOptions = config.options;
     this.tsConfigFileNames = config.fileNames;
@@ -80,13 +90,22 @@ export class TypeScriptLanguageService implements ProjectContext {
     this.eslint = this.loadEslint();
   }
 
+  /** The tsconfig this project is checked against. */
+  getConfigPath(): string {
+    return this.configPath;
+  }
+
+  /** True when no tsconfig backs this project, so options are inferred. */
+  isUnconfigured(): boolean {
+    return !fs.existsSync(this.configPath);
+  }
+
   /**
-   * Loads tsconfig.json from the project root. Returns compiler options and,
+   * Loads the tsconfig governing this project. Returns compiler options and,
    * when a tsconfig is present, the fully-resolved list of files it includes.
-   * Only checks the project root directory — does NOT walk up to parent directories.
    */
   private loadProjectConfig(): { options: ts.CompilerOptions; fileNames: string[] | null } {
-    const configPath = path.join(this.projectRoot, 'tsconfig.json');
+    const configPath = this.configPath;
 
     if (fs.existsSync(configPath)) {
       const configFile = ts.readConfigFile(configPath, ts.sys.readFile);
@@ -97,10 +116,12 @@ export class TypeScriptLanguageService implements ProjectContext {
         return { options: this.defaultCompilerOptions(), fileNames: null };
       }
 
+      // Relative include/exclude globs resolve against the config's own
+      // directory, which is not the project root for a nested tsconfig.
       const parsed = ts.parseJsonConfigFileContent(
         configFile.config,
         ts.sys,
-        this.projectRoot
+        path.dirname(configPath)
       );
       if (parsed.errors.length > 0) {
         for (const err of parsed.errors) {
