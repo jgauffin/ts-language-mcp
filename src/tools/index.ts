@@ -1,5 +1,4 @@
-import type { TypeScriptLanguageService } from '../language-service.js';
-import type { ProjectRegistry } from '../project-registry.js';
+import type { LanguageIntelligence } from '../types.js';
 import type { AstFinder } from '../ast-finder.js';
 import { ComplexityAnalyzer } from '../analyzers/complexity-analyzer.js';
 import { CouplingAnalyzer } from '../analyzers/coupling-analyzer.js';
@@ -8,7 +7,13 @@ import { DuplicationDetector } from '../analyzers/duplication-detector.js';
 import { toYaml } from '../yaml.js';
 import { normalizePath } from '../paths.js';
 import { SymbolResolver } from '../symbol-resolver.js';
-import type { ToolContext, ToolDefinition, ToolHandlerFn, ToolModule } from './context.js';
+import type {
+  ToolContext,
+  ToolDefinition,
+  ToolHandlerFn,
+  ToolModule,
+  MultiConfigProject,
+} from './context.js';
 
 import { navigationTools } from './navigation.js';
 import { intelligenceTools } from './intelligence.js';
@@ -17,7 +22,13 @@ import { diagnosticsTools } from './diagnostics.js';
 import { refactoringTools } from './refactoring.js';
 import { qualityTools } from './quality.js';
 
-export type { ToolContext, ToolDefinition, ToolHandlerFn, ToolModule } from './context.js';
+export type {
+  ToolContext,
+  ToolDefinition,
+  ToolHandlerFn,
+  ToolModule,
+  MultiConfigProject,
+} from './context.js';
 export { TOOL_SCHEMAS } from './schemas.js';
 
 /** Every tool module, in the order tools are advertised to clients. */
@@ -61,7 +72,7 @@ export class ToolHandler {
   private lastRefreshTime = 0;
   private static REFRESH_INTERVAL_MS = 2000;
 
-  constructor(languageService: TypeScriptLanguageService, astFinder: AstFinder) {
+  constructor(languageService: LanguageIntelligence, astFinder: AstFinder) {
     this.context = {
       languageService,
       astFinder,
@@ -74,13 +85,14 @@ export class ToolHandler {
   }
 
   /**
-   * The language service as a registry, when it is one. Lets the handler warn
-   * about files no tsconfig governs without requiring a registry to be used.
+   * The language service as a multi-config project, when it is one. Lets the
+   * handler warn about files no tsconfig governs without requiring a
+   * multi-config service to be in use.
    */
-  private registry(): ProjectRegistry | undefined {
-    const service = this.context.languageService as Partial<ProjectRegistry>;
+  private registry(): MultiConfigProject | undefined {
+    const service = this.context.languageService as Partial<MultiConfigProject>;
     return typeof service.isFileUnconfigured === 'function'
-      ? (service as ProjectRegistry)
+      ? (service as MultiConfigProject)
       : undefined;
   }
 

@@ -1,4 +1,4 @@
-import type { TypeScriptLanguageService } from '../language-service.js';
+import type { LanguageIntelligence } from '../types.js';
 import type {
   SymbolNode,
   IndirectionOffender,
@@ -13,10 +13,6 @@ import type {
  */
 function symbolKey(file: string, line: number, column: number): string {
   return `${file}:${line}:${column}`;
-}
-
-function keyFromNode(node: SymbolNode): string {
-  return symbolKey(node.file, node.line, node.column);
 }
 
 /** Symbol kinds that represent callable code. */
@@ -41,9 +37,9 @@ function isTestFile(file: string): boolean {
  * Returns worst offenders ranked by score with full call chains.
  */
 export class IndirectionAnalyzer {
-  private ls: TypeScriptLanguageService;
+  private ls: LanguageIntelligence;
 
-  constructor(languageService: TypeScriptLanguageService) {
+  constructor(languageService: LanguageIntelligence) {
     this.ls = languageService;
   }
 
@@ -138,7 +134,7 @@ export class IndirectionAnalyzer {
 
     // Step 2: For each symbol, get outgoing calls to build edges
     for (const [key, sym] of symbols) {
-      let outgoing: ReturnType<TypeScriptLanguageService['getCallHierarchy']>;
+      let outgoing: ReturnType<LanguageIntelligence['getCallHierarchy']>;
       try {
         outgoing = this.ls.getCallHierarchy(sym.file, sym.line, sym.column, 'outgoing');
       } catch {

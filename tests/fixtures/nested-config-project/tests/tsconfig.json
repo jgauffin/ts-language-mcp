@@ -5,7 +5,11 @@
     "moduleResolution": "NodeNext",
     "strict": true,
     "esModuleInterop": true,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "baseUrl": ".",
+    "paths": {
+      "@fixture/*": ["./*"]
+    }
   },
   "include": ["**/*"]
 }

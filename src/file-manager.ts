@@ -1,6 +1,6 @@
 import * as path from 'path';
 import * as fs from 'fs';
-import * as ts from 'typescript';
+import ts from 'typescript';
 import { normalizePath } from './paths.js';
 
 export interface FileEntry {

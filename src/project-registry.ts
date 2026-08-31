@@ -1,8 +1,11 @@
 import * as path from 'path';
 import * as fs from 'fs';
+import ts from 'typescript';
 import { TypeScriptLanguageService } from './language-service.js';
 import { normalizePath } from './paths.js';
 import type {
+  LanguageIntelligence,
+  DiagnosticOptions,
   Diagnostic,
   DiagnosticSeverity,
   AllDiagnosticsResult,
@@ -49,24 +52,26 @@ const MAX_CONFIG_DEPTH = 4;
  * against the root config reports every one of those globals as an undefined
  * name, so the answer describes a project that does not exist.
  *
+ * This delegates to per-config services rather than inheriting from one.
+ * Inheritance made an un-routed method silently answer from the registry's own
+ * root-config state — a program that did not contain the file being asked
+ * about, or module resolution missing the governing config's "paths" aliases.
+ * Implementing the interface instead means the compiler rejects a method that
+ * was never routed, so the mistake cannot recur.
+ *
  * Behaviour is unchanged for the single-tsconfig case: one project is
  * discovered and every call goes to it.
  */
-export class ProjectRegistry extends TypeScriptLanguageService {
+export class ProjectRegistry implements LanguageIntelligence {
   private projects: TypeScriptLanguageService[] = [];
   private fallback: TypeScriptLanguageService | null = null;
   private rootDir: string;
   private discoveredConfigs: string[];
 
   constructor(projectRoot: string) {
-    super(projectRoot);
     this.rootDir = path.resolve(projectRoot).replace(/[\\\/]+$/, '');
     this.discoveredConfigs = this.discoverConfigs();
 
-    // Every config gets its own service, the root one included. Delegating to
-    // a sibling rather than to `super` keeps each override a plain fan-out; a
-    // registry that also acted as its own root project would re-enter its own
-    // overrides and recurse without end.
     const rootConfig = path.join(this.rootDir, 'tsconfig.json');
     const configs = this.discoveredConfigs.length > 0 ? this.discoveredConfigs : [rootConfig];
 
@@ -107,6 +112,11 @@ export class ProjectRegistry extends TypeScriptLanguageService {
   /** Every discovered project, the root one first. */
   private allProjects(): TypeScriptLanguageService[] {
     return this.projects;
+  }
+
+  /** The project a caller gets when no file narrows the question. */
+  private rootProject(): TypeScriptLanguageService {
+    return this.projects[0] ?? this.unconfiguredProject();
   }
 
   /**
@@ -217,9 +227,79 @@ export class ProjectRegistry extends TypeScriptLanguageService {
     return fs.existsSync(path.resolve(this.rootDir, filePath));
   }
 
+  // ── Project identity and configuration ──
+
+  /**
+   * These answer per file, because which tsconfig governs a file decides its
+   * options, its program and how its imports resolve. Without a file there is
+   * no governing config to consult, so the root project answers.
+   */
+  getConfigPath(filePath?: string): string {
+    return filePath ? this.serviceFor(filePath).getConfigPath() : this.rootProject().getConfigPath();
+  }
+
+  isUnconfigured(filePath?: string): boolean {
+    return filePath ? this.isFileUnconfigured(filePath) : this.rootProject().isUnconfigured();
+  }
+
+  getCompilerOptions(filePath?: string): ts.CompilerOptions {
+    return filePath
+      ? this.serviceFor(filePath).getCompilerOptions()
+      : this.rootProject().getCompilerOptions();
+  }
+
+  getProgram(filePath?: string): ts.Program | undefined {
+    return filePath
+      ? this.serviceFor(filePath).getProgram()
+      : this.rootProject().getProgram();
+  }
+
+  getProjectRoot(): string {
+    return this.rootDir;
+  }
+
+  resolveModule(specifier: string, containingFile: string): string | undefined {
+    return this.serviceFor(containingFile).resolveModule(specifier, containingFile);
+  }
+
+  // ── File cache ──
+
+  /**
+   * A file may be listed by more than one config, so every project holding it
+   * has to see the change; otherwise one of them keeps serving stale text.
+   */
+  loadFile(filePath: string): void {
+    for (const project of this.projectsHolding(filePath)) {
+      project.loadFile(filePath);
+    }
+  }
+
+  updateFile(filePath: string, content: string): void {
+    for (const project of this.projectsHolding(filePath)) {
+      project.updateFile(filePath, content);
+    }
+  }
+
+  /** Every project whose config lists the file, or its governing one alone. */
+  private projectsHolding(filePath: string): TypeScriptLanguageService[] {
+    const target = cacheKeyFor(this.rootDir, filePath);
+    const holders = this.allProjects().filter((project) =>
+      project.getProjectFiles().some((f) => cacheKeyFor(this.rootDir, f) === target)
+    );
+
+    return holders.length > 0 ? holders : [this.serviceFor(filePath)];
+  }
+
+  refreshChangedFiles(): void {
+    for (const project of this.allProjects()) {
+      project.refreshChangedFiles();
+    }
+    this.fallback?.refreshChangedFiles();
+  }
+
   // ── Project-wide operations, merged across configs ──
 
-  override getProjectFiles(): string[] {
+  getProjectFiles(): string[] {
     const seen = new Set<string>();
     const files: string[] = [];
 
@@ -235,7 +315,7 @@ export class ProjectRegistry extends TypeScriptLanguageService {
     return files;
   }
 
-  override getFileContent(filePath: string): string | undefined {
+  getFileContent(filePath: string): string | undefined {
     for (const project of this.allProjects()) {
       const content = project.getFileContent(filePath);
       if (content !== undefined) return content;
@@ -243,15 +323,9 @@ export class ProjectRegistry extends TypeScriptLanguageService {
     return undefined;
   }
 
-  override refreshChangedFiles(): void {
-    for (const project of this.allProjects()) {
-      project.refreshChangedFiles();
-    }
-  }
-
-  override async getAllDiagnostics(
+  async getAllDiagnostics(
     severity?: DiagnosticSeverity,
-    options?: { includeEslint?: boolean; limit?: number; includeSuggestions?: boolean }
+    options?: DiagnosticOptions
   ): Promise<AllDiagnosticsResult> {
     const merged: AllDiagnosticsResult = {
       files: {},
@@ -299,7 +373,24 @@ export class ProjectRegistry extends TypeScriptLanguageService {
     };
   }
 
-  override getWorkspaceSymbols(
+  /** Config problems from every discovered project, not just the root one. */
+  getCompilerOptionsDiagnostics(): Diagnostic[] {
+    const seen = new Set<string>();
+    const all: Diagnostic[] = [];
+
+    for (const project of this.allProjects()) {
+      for (const diagnostic of project.getCompilerOptionsDiagnostics()) {
+        const key = `${diagnostic.file}:${diagnostic.code}:${diagnostic.message}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        all.push(diagnostic);
+      }
+    }
+
+    return all;
+  }
+
+  getWorkspaceSymbols(
     query: string,
     maxResults: number = 100,
     file?: string
@@ -323,15 +414,15 @@ export class ProjectRegistry extends TypeScriptLanguageService {
 
   // ── File-scoped operations, routed to the governing project ──
 
-  override getHover(filePath: string, line: number, column: number): string | undefined {
+  getHover(filePath: string, line: number, column: number): string | undefined {
     return this.serviceFor(filePath).getHover(filePath, line, column);
   }
 
-  override getDefinitions(filePath: string, line: number, column: number): FilePosition[] {
+  getDefinitions(filePath: string, line: number, column: number): FilePosition[] {
     return this.serviceFor(filePath).getDefinitions(filePath, line, column);
   }
 
-  override getDefinition(
+  getDefinition(
     filePath: string,
     line: number,
     column: number
@@ -339,7 +430,7 @@ export class ProjectRegistry extends TypeScriptLanguageService {
     return this.serviceFor(filePath).getDefinition(filePath, line, column);
   }
 
-  override getReferences(
+  getReferences(
     filePath: string,
     line: number,
     column: number,
@@ -348,22 +439,22 @@ export class ProjectRegistry extends TypeScriptLanguageService {
     return this.serviceFor(filePath).getReferences(filePath, line, column, contextLines);
   }
 
-  override async getDiagnostics(
+  async getDiagnostics(
     filePath: string,
-    options?: { includeEslint?: boolean; limit?: number; includeSuggestions?: boolean }
+    options?: DiagnosticOptions
   ): Promise<Diagnostic[]> {
     return this.serviceFor(filePath).getDiagnostics(filePath, options);
   }
 
-  override getSymbols(filePath: string): SymbolInfo[] {
+  getSymbols(filePath: string): SymbolInfo[] {
     return this.serviceFor(filePath).getSymbols(filePath);
   }
 
-  override getCompletions(filePath: string, line: number, column: number): CompletionItem[] {
+  getCompletions(filePath: string, line: number, column: number): CompletionItem[] {
     return this.serviceFor(filePath).getCompletions(filePath, line, column);
   }
 
-  override getSignature(
+  getSignature(
     filePath: string,
     line: number,
     column: number
@@ -371,7 +462,7 @@ export class ProjectRegistry extends TypeScriptLanguageService {
     return this.serviceFor(filePath).getSignature(filePath, line, column);
   }
 
-  override async analyzePosition(
+  async analyzePosition(
     filePath: string,
     line: number,
     column: number
@@ -379,19 +470,19 @@ export class ProjectRegistry extends TypeScriptLanguageService {
     return this.serviceFor(filePath).analyzePosition(filePath, line, column);
   }
 
-  override getImplementations(filePath: string, line: number, column: number): FilePosition[] {
+  getImplementations(filePath: string, line: number, column: number): FilePosition[] {
     return this.serviceFor(filePath).getImplementations(filePath, line, column);
   }
 
-  override getImports(filePath: string): ImportInfo[] {
+  getImports(filePath: string): ImportInfo[] {
     return this.serviceFor(filePath).getImports(filePath);
   }
 
-  override getOutline(filePath: string): OutlineItem[] {
+  getOutline(filePath: string): OutlineItem[] {
     return this.serviceFor(filePath).getOutline(filePath);
   }
 
-  override getRenameLocations(
+  getRenameLocations(
     filePath: string,
     line: number,
     column: number,
@@ -400,7 +491,7 @@ export class ProjectRegistry extends TypeScriptLanguageService {
     return this.serviceFor(filePath).getRenameLocations(filePath, line, column, newName);
   }
 
-  override applyRename(
+  applyRename(
     filePath: string,
     line: number,
     column: number,
@@ -412,7 +503,7 @@ export class ProjectRegistry extends TypeScriptLanguageService {
     return result;
   }
 
-  override getCallHierarchy(
+  getCallHierarchy(
     filePath: string,
     line: number,
     column: number,
@@ -421,7 +512,7 @@ export class ProjectRegistry extends TypeScriptLanguageService {
     return this.serviceFor(filePath).getCallHierarchy(filePath, line, column, direction);
   }
 
-  override getTypeHierarchy(
+  getTypeHierarchy(
     filePath: string,
     line: number,
     column: number,
@@ -430,7 +521,7 @@ export class ProjectRegistry extends TypeScriptLanguageService {
     return this.serviceFor(filePath).getTypeHierarchy(filePath, line, column, direction);
   }
 
-  override formatDocument(
+  formatDocument(
     filePath: string,
     options?: FormatOptions,
     includeContent = false
@@ -440,7 +531,7 @@ export class ProjectRegistry extends TypeScriptLanguageService {
     return result;
   }
 
-  override getCodeFixes(
+  getCodeFixes(
     filePath: string,
     line: number,
     column: number,
@@ -449,7 +540,7 @@ export class ProjectRegistry extends TypeScriptLanguageService {
     return this.serviceFor(filePath).getCodeFixes(filePath, line, column, errorCodes);
   }
 
-  override applyCodeFix(
+  applyCodeFix(
     filePath: string,
     line: number,
     column: number,
@@ -467,17 +558,17 @@ export class ProjectRegistry extends TypeScriptLanguageService {
     return result;
   }
 
-  override organizeImports(filePath: string, apply = false): OrganizeImportsResult {
+  organizeImports(filePath: string, apply = false): OrganizeImportsResult {
     const result = this.serviceFor(filePath).organizeImports(filePath, apply);
     if (result.applied) this.refreshChangedFiles();
     return result;
   }
 
-  override getTypeDefinition(filePath: string, line: number, column: number): FilePosition[] {
+  getTypeDefinition(filePath: string, line: number, column: number): FilePosition[] {
     return this.serviceFor(filePath).getTypeDefinition(filePath, line, column);
   }
 
-  override getModuleDependencies(
+  getModuleDependencies(
     filePath: string,
     options?: {
       direction?: 'imports' | 'importedBy' | 'both';

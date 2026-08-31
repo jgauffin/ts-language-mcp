@@ -1,4 +1,4 @@
-import type { TypeScriptLanguageService } from './language-service.js';
+import type { LanguageIntelligence } from './types.js';
 
 /**
  * Resource URIs exposed via MCP.
@@ -19,9 +19,9 @@ export const RESOURCE_URIS = {
  * const files = handler.getProjectFiles();
  */
 export class ResourceHandler {
-  private languageService: TypeScriptLanguageService;
+  private languageService: LanguageIntelligence;
 
-  constructor(languageService: TypeScriptLanguageService) {
+  constructor(languageService: LanguageIntelligence) {
     this.languageService = languageService;
   }
 
@@ -110,14 +110,6 @@ export class ResourceHandler {
     // template. Enumerating every one of them here would return a listing
     // proportional to the size of the project on every resources/list call.
     return resources;
-  }
-
-  private getMimeType(filePath: string): string {
-    if (filePath.endsWith('.tsx')) return 'text/typescript-jsx';
-    if (filePath.endsWith('.ts')) return 'text/typescript';
-    if (filePath.endsWith('.jsx')) return 'text/javascript-jsx';
-    if (filePath.endsWith('.js')) return 'text/javascript';
-    return 'text/plain';
   }
 
   /**
