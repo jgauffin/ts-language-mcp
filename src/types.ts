@@ -599,6 +599,8 @@ export interface LanguageIntelligence extends ProjectContext {
   loadFile(filePath: string): void;
   updateFile(filePath: string, content: string): void;
   refreshChangedFiles(): void;
+  /** Files whose unsaved changes the last refresh replaced, reported once. */
+  takeDiscardedEdits(): string[];
 
   // ── Navigation ──
 

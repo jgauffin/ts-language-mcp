@@ -60,6 +60,11 @@ export function createServer(projectRoot?: string, options?: ServerOptions): Mcp
     instructions,
   });
 
+  // The client owns this process's lifetime, so the branch watcher has to go
+  // when the connection does; leaving it registered would keep a listener alive
+  // for a session that has ended.
+  mcpServer.server.onclose = () => toolHandler.dispose();
+
   // Register tool handlers on the underlying server (uses JSON Schema, not Zod)
   mcpServer.server.setRequestHandler(ListToolsRequestSchema, async () => {
     return {

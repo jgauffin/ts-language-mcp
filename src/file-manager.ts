@@ -25,6 +25,8 @@ export class FileManager {
   private files: Map<string, FileEntry> = new Map();
   private projectRoot: string;
   private resolveProjectFiles: ProjectFileResolver | null;
+  /** Files whose unsaved changes a refresh replaced, awaiting report. */
+  private discardedEdits: string[] = [];
   private static EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mts', '.cts', '.mjs', '.cjs'];
   private static SKIP_DIRS = ['node_modules', 'dist', 'build', 'coverage'];
 
@@ -162,9 +164,11 @@ export class FileManager {
     for (const [key, entry] of Array.from(this.files.entries())) {
       try {
         if (!fs.existsSync(entry.fileName)) {
+          this.noteDiscardedEdit(entry);
           this.files.delete(key);
         }
       } catch {
+        this.noteDiscardedEdit(entry);
         this.files.delete(key);
       }
     }
@@ -195,12 +199,41 @@ export class FileManager {
 
       try {
         if (fs.statSync(absolutePath).mtimeMs !== existing.mtime) {
+          this.noteDiscardedEdit(existing);
           this.loadFile(absolutePath);
         }
       } catch {
+        this.noteDiscardedEdit(existing);
         this.files.delete(key);
       }
     }
+  }
+
+  /**
+   * Records that a file's unsaved changes were about to be replaced by disk.
+   *
+   * The zero mtime is what marks an entry as holding content that was never
+   * written, so only those are worth reporting; a reload over content that
+   * already matched disk loses nothing.
+   */
+  private noteDiscardedEdit(entry: FileEntry): void {
+    if (entry.mtime !== 0) return;
+
+    const relative = normalizePath(path.relative(this.projectRoot, entry.fileName));
+    if (!this.discardedEdits.includes(relative)) {
+      this.discardedEdits.push(relative);
+    }
+  }
+
+  /**
+   * Returns the files whose unsaved changes a refresh replaced, and forgets
+   * them. Draining means the caller is told once rather than on every later
+   * request.
+   */
+  takeDiscardedEdits(): string[] {
+    const discarded = this.discardedEdits;
+    this.discardedEdits = [];
+    return discarded;
   }
 
   private refreshDirectory(dir: string, extensions: string[]): void {
@@ -226,10 +259,13 @@ export class FileManager {
           } else {
             const currentMtime = fs.statSync(fullPath).mtimeMs;
             if (currentMtime !== existing.mtime) {
+              this.noteDiscardedEdit(existing);
               this.loadFile(fullPath);
             }
           }
         } catch {
+          const existing = this.files.get(this.cacheKey(fullPath));
+          if (existing) this.noteDiscardedEdit(existing);
           this.files.delete(this.cacheKey(fullPath));
         }
       }

@@ -81,6 +81,27 @@ export abstract class LanguageServiceBase {
     return { options: this.defaultCompilerOptions(), fileNames: null };
   }
 
+  /**
+   * Adopts compiler options that changed on disk, rebuilding if they did.
+   *
+   * A branch switch can bring a different tsconfig — strict flipped, a new
+   * target, an added path alias. The host reads the options field through a
+   * closure, so assigning it is enough to change how new work is compiled, but
+   * every source file already parsed under the old options stays cached in the
+   * document registry. Replacing the language service is what discards them.
+   *
+   * Returns whether it rebuilt, so a caller can order the rest of its refresh
+   * around the fact that the file cache was just invalidated.
+   */
+  protected reloadConfigIfChanged(): boolean {
+    const reloaded = this.loadProjectConfig().options;
+    if (sameCompilerOptions(reloaded, this.compilerOptions)) return false;
+
+    this.compilerOptions = reloaded;
+    this.service = this.createLanguageService();
+    return true;
+  }
+
   private defaultCompilerOptions(): ts.CompilerOptions {
     return {
       target: ts.ScriptTarget.ES2022,
@@ -97,7 +118,7 @@ export abstract class LanguageServiceBase {
    * Creates the LanguageService with a custom host.
    * The host bridges TS compiler with our file management.
    */
-  private createLanguageService(): ts.LanguageService {
+  protected createLanguageService(): ts.LanguageService {
     const host: ts.LanguageServiceHost = {
       getScriptFileNames: () => this.fileManager.getAbsolutePaths(),
       getScriptVersion: (fileName) => this.fileManager.getScriptVersion(fileName),
@@ -281,6 +302,24 @@ export abstract class LanguageServiceBase {
 
     return perFile.get(spanStart) ?? spanStart;
   }
+}
+
+/**
+ * Whether two sets of compiler options would compile the same way.
+ *
+ * Option values are primitives or arrays of them once tsconfig is parsed, so
+ * comparing a key-sorted serialization is exact here and avoids a deep-equality
+ * helper. Key order varies between parses, hence the sort.
+ */
+function sameCompilerOptions(left: ts.CompilerOptions, right: ts.CompilerOptions): boolean {
+  const serialize = (options: ts.CompilerOptions): string =>
+    JSON.stringify(
+      Object.entries(options)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([key, value]) => [key, value ?? null])
+    );
+
+  return serialize(left) === serialize(right);
 }
 
 /**

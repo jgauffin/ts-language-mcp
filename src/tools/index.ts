@@ -70,6 +70,7 @@ export class ToolHandler {
   private symbolResolver: SymbolResolver;
   private requestQueue: Promise<unknown> = Promise.resolve();
   private lastRefreshTime = 0;
+  private stopWatching: (() => void) | null = null;
   private static REFRESH_INTERVAL_MS = 2000;
 
   constructor(languageService: LanguageIntelligence, astFinder: AstFinder) {
@@ -82,6 +83,31 @@ export class ToolHandler {
       duplication: new DuplicationDetector(languageService),
     };
     this.symbolResolver = new SymbolResolver(languageService);
+    this.stopWatching = this.registry()?.watchForBranchChanges(() => this.queueRefresh()) ?? null;
+  }
+
+  /**
+   * Rebuilds after a branch change, without waiting for a request to ask.
+   *
+   * Joins the request queue rather than running straight away: replacing a
+   * language service underneath a tool call already being answered would have
+   * it finish against a program that no longer exists.
+   */
+  private queueRefresh(): void {
+    const task = this.requestQueue.then(() => {
+      this.lastRefreshTime = Date.now();
+      this.context.languageService.refreshChangedFiles();
+    });
+    this.requestQueue = task.catch(() => {});
+  }
+
+  /**
+   * Releases the branch watcher. The server holds no other resource that
+   * outlives it, so this is all a shutdown has to do.
+   */
+  dispose(): void {
+    this.stopWatching?.();
+    this.stopWatching = null;
   }
 
   /**
@@ -196,9 +222,16 @@ export class ToolHandler {
     try {
       // Always refresh for diagnostic tools to avoid stale results;
       // throttle other tools to avoid re-walking the directory tree on every call.
+      // A branch switch overrides the throttle: waiting out the window would
+      // answer from code the developer has already left behind.
       const now = Date.now();
       const isDiagnostic = name === 'get_diagnostics' || name === 'get_all_diagnostics';
-      if (isDiagnostic || now - this.lastRefreshTime >= ToolHandler.REFRESH_INTERVAL_MS) {
+      const branchMoved = this.registry()?.hasGitStateChanged() ?? false;
+      if (
+        isDiagnostic ||
+        branchMoved ||
+        now - this.lastRefreshTime >= ToolHandler.REFRESH_INTERVAL_MS
+      ) {
         this.lastRefreshTime = now;
         this.context.languageService.refreshChangedFiles();
       }
@@ -236,7 +269,9 @@ export class ToolHandler {
       }
 
       const result = await this.dispatch(name, resolvedArgs);
-      const annotated = this.withUnconfiguredWarning(result, resolvedArgs);
+      const annotated = this.withDiscardedEditsNotice(
+        this.withUnconfiguredWarning(result, resolvedArgs)
+      );
       const text = JSON_TOOLS.has(name)
         ? JSON.stringify(annotated, null, 2)
         : toYaml(annotated);
@@ -268,11 +303,26 @@ export class ToolHandler {
     const registry = this.registry();
     if (!registry?.isFileUnconfigured(file)) return result;
 
-    const warning = registry.unconfiguredWarning(file);
-    if (result === null || result === undefined) return { warning };
-    if (Array.isArray(result)) return { warning, results: result };
-    if (typeof result === 'object') return { warning, ...(result as object) };
-    return { warning, result };
+    return annotate(result, 'warning', registry.unconfiguredWarning(file));
+  }
+
+  /**
+   * Tells the caller that unsaved changes they had handed the server were
+   * replaced by newer content on disk.
+   *
+   * A branch switch is the usual cause: the file the caller edited in memory no
+   * longer exists in that form. Disk wins, but staying silent would leave them
+   * reading results that contradict the edit they think is in place.
+   */
+  private withDiscardedEditsNotice(result: unknown): unknown {
+    const discarded = this.context.languageService.takeDiscardedEdits();
+    if (discarded.length === 0) return result;
+
+    const notice =
+      `Unsaved changes to ${discarded.join(', ')} were replaced by newer content ` +
+      `on disk, so this result describes the files as they are now stored.`;
+
+    return annotate(result, 'notice', notice);
   }
 
   private dispatch(name: string, args: Record<string, unknown>): unknown | Promise<unknown> {
@@ -282,4 +332,18 @@ export class ToolHandler {
     }
     return handler(args, this.context);
   }
+}
+
+/**
+ * Attaches a note to a tool result without displacing it.
+ *
+ * Results come back as objects, arrays or bare values, and each has to keep its
+ * shape: an array folded into an object would break every caller that iterates
+ * it, so it is carried under "results" instead.
+ */
+function annotate(result: unknown, key: string, message: string): unknown {
+  if (result === null || result === undefined) return { [key]: message };
+  if (Array.isArray(result)) return { [key]: message, results: result };
+  if (typeof result === 'object') return { [key]: message, ...(result as object) };
+  return { [key]: message, result };
 }

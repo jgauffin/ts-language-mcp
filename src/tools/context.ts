@@ -11,6 +11,10 @@ export interface MultiConfigProject {
   isFileUnconfigured(filePath: string): boolean;
   fileExistsOnDisk(filePath: string): boolean;
   unconfiguredWarning(filePath: string): string;
+  /** True when the working tree has moved to different code since the last refresh. */
+  hasGitStateChanged(): boolean;
+  /** Calls back when the working tree moves; returns a function to stop. */
+  watchForBranchChanges(onChange: () => void): () => void;
 }
 import type { ComplexityAnalyzer } from '../analyzers/complexity-analyzer.js';
 import type { CouplingAnalyzer } from '../analyzers/coupling-analyzer.js';

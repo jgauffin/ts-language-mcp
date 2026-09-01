@@ -2,6 +2,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import ts from 'typescript';
 import { TypeScriptLanguageService } from './language-service.js';
+import { GitState } from './git-state.js';
 import { normalizePath } from './paths.js';
 import type {
   LanguageIntelligence,
@@ -66,18 +67,42 @@ export class ProjectRegistry implements LanguageIntelligence {
   private projects: TypeScriptLanguageService[] = [];
   private fallback: TypeScriptLanguageService | null = null;
   private rootDir: string;
-  private discoveredConfigs: string[];
+  private discoveredConfigs: string[] = [];
+  private gitState: GitState;
+  /** Config paths in the order projects were built, parallel to `projects`. */
+  private projectConfigs: string[] = [];
 
   constructor(projectRoot: string) {
     this.rootDir = path.resolve(projectRoot).replace(/[\\\/]+$/, '');
+    this.gitState = new GitState(this.rootDir);
+    this.syncProjects();
+  }
+
+  /**
+   * Makes the set of projects match the tsconfigs currently on disk.
+   *
+   * A branch can add or delete a tsconfig, which changes which projects should
+   * exist at all. Services for configs that are still present are kept rather
+   * than rebuilt, so a checkout that touches one config does not cost a
+   * re-index of every other project.
+   */
+  private syncProjects(): void {
     this.discoveredConfigs = this.discoverConfigs();
 
     const rootConfig = path.join(this.rootDir, 'tsconfig.json');
     const configs = this.discoveredConfigs.length > 0 ? this.discoveredConfigs : [rootConfig];
 
-    for (const configPath of configs) {
-      this.projects.push(new TypeScriptLanguageService(this.rootDir, configPath));
-    }
+    const existing = new Map<string, TypeScriptLanguageService>();
+    this.projectConfigs.forEach((configPath, index) => {
+      const project = this.projects[index];
+      if (project) existing.set(configPath, project);
+    });
+
+    this.projects = configs.map(
+      (configPath) =>
+        existing.get(configPath) ?? new TypeScriptLanguageService(this.rootDir, configPath)
+    );
+    this.projectConfigs = configs;
   }
 
   /** Every tsconfig at or below the root, nearest ones first. */
@@ -290,11 +315,64 @@ export class ProjectRegistry implements LanguageIntelligence {
     return holders.length > 0 ? holders : [this.serviceFor(filePath)];
   }
 
+  /**
+   * Brings every project back in line with disk.
+   *
+   * When the working tree has moved to different code, the set of projects is
+   * reconciled first: a branch may have added or deleted a tsconfig, and each
+   * surviving project then re-reads its own options before syncing its files.
+   */
   refreshChangedFiles(): void {
+    if (this.gitState.hasChanged()) {
+      this.syncProjects();
+      // Files this held may now belong to a config that arrived with the
+      // branch, so its inferred-option answers are no longer the best available.
+      this.fallback = null;
+    }
+
     for (const project of this.allProjects()) {
       project.refreshChangedFiles();
     }
     this.fallback?.refreshChangedFiles();
+  }
+
+  /**
+   * Whether the working tree has moved since the last refresh.
+   *
+   * Lets a throttled caller skip its own timer for a checkout without
+   * consuming the change; `refreshChangedFiles` is what acts on it.
+   */
+  hasGitStateChanged(): boolean {
+    return this.gitState.isStale();
+  }
+
+  /**
+   * Refreshes as soon as the working tree moves, rather than waiting for the
+   * next request to notice. Returns a function that stops watching.
+   *
+   * The callback decides how to run the refresh — a caller with in-flight work
+   * needs it serialized against that work, which is not something this can
+   * know.
+   */
+  watchForBranchChanges(onChange: () => void): () => void {
+    return this.gitState.watch(onChange);
+  }
+
+  takeDiscardedEdits(): string[] {
+    const seen = new Set<string>();
+    const discarded: string[] = [];
+
+    const projects = this.fallback ? [...this.allProjects(), this.fallback] : this.allProjects();
+    for (const project of projects) {
+      for (const file of project.takeDiscardedEdits()) {
+        const key = cacheKeyFor(this.rootDir, file);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        discarded.push(file);
+      }
+    }
+
+    return discarded;
   }
 
   // ── Project-wide operations, merged across configs ──

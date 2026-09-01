@@ -57,8 +57,21 @@ export class TypeScriptLanguageService extends RefactorService implements Langua
     this.fileManager.updateFile(filePath, content);
   }
 
+  /**
+   * Brings the project back in line with disk, config first.
+   *
+   * Order matters: adopting changed compiler options replaces the language
+   * service, discarding every source file cached under the old ones. Syncing
+   * files first would hand that rebuild a cache it immediately throws away, so
+   * the project would answer from nothing until the following refresh.
+   */
   refreshChangedFiles(): void {
+    this.reloadConfigIfChanged();
     this.fileManager.refreshChangedFiles();
+  }
+
+  takeDiscardedEdits(): string[] {
+    return this.fileManager.takeDiscardedEdits();
   }
 
   getProjectFiles(): string[] {

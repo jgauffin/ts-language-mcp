@@ -7,174 +7,104 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-09-01
+
+### Fixed
+
+- Branch switches are detected; answers no longer describe the branch you left.
+- Compiler options changed by a branch are re-read, and the project rebuilt.
+- A tsconfig added or deleted by a branch is picked up.
+- A branch switch overrides the 2s refresh throttle.
+
+### Added
+
+- The working tree is watched, so a checkout is picked up while the server is idle.
+- Results carry a `notice` when unsaved changes were replaced by content on disk.
+
+### Notes
+
+- Git files are read directly; no `git` binary needed. Projects without git are unaffected.
+- Worktrees and submodules supported.
+
 ## [2.2.0] - 2026-08-31
 
 ### Fixed
 
-- **Each file is now checked against the tsconfig that actually governs it.**
-  The server read only `<root>/tsconfig.json` and never looked for a nested one,
-  so a `tests/tsconfig.json` — the ordinary, framework-agnostic way a project
-  declares its test runner's globals via `"types"` — was ignored entirely. Files
-  it governs were either checked under the wrong compiler options, reporting
-  every runner global as an undefined name, or excluded from the project
-  outright.
-- **A file outside the project is no longer reported as missing.** Asking about
-  a file the root tsconfig excludes returned `File not found: "tests/foo.test.ts"`
-  for a file plainly on disk. The message named the wrong cause, so the honest
-  conclusion was that the path was wrong or the analyzer was unreliable — when
-  the real cause was tsconfig scope. Such a file is now analysed and the result
-  says so.
+- Each file is checked against the tsconfig that governs it, including nested ones such as `tests/tsconfig.json`.
+- A file outside the root tsconfig is analysed instead of reported as missing.
 
 ### Added
 
-- Results for a file no tsconfig covers carry a `warning` naming the nearest
-  config and how to bring the file into it. Unresolved-name errors are worth
-  less when the options were inferred, and the caller now knows which case they
-  are looking at rather than having to guess.
+- Results for a file no tsconfig covers carry a `warning` naming the nearest config.
 
 ### Notes
 
-- Diagnostics that TypeScript genuinely reports are unchanged. Where a project's
-  own config omits its runner's types, the errors still match `tsc --noEmit`
-  exactly; they are real config problems and are not suppressed.
-- Directories holding test fixtures (`fixtures`, `__fixtures__`, `testdata`,
-  `__mocks__`) are skipped when discovering configs, so sample projects belonging
-  to a test suite stay out of project-wide reports.
+- Diagnostics TypeScript genuinely reports are unchanged; real config problems are not suppressed.
+- Fixture directories (`fixtures`, `__fixtures__`, `testdata`, `__mocks__`) are skipped during config discovery.
 
 ## [2.1.0] - 2026-08-30
 
 ### Fixed
 
-- **The compiler no longer answers from the text a file had at startup.** The
-  file cache was keyed by native path (`C:\src\app.ts`) while TypeScript asked
-  its host with the normalized form (`C:/src/app.ts`), so every key lookup
-  missed: `getScriptVersion` reported "unchanged" forever and no file was ever
-  re-parsed after an edit, ours or an editor's. Positions were computed from the
-  current file and spans from the stale parse, which drifted by the length of
-  every edit in between. A second `rename_symbol` in one session wrote its edits
-  at those offsets and shredded the file while reporting success. Diagnostics,
-  references and definitions were stale from the first write onwards.
+- Files are re-parsed after an edit. A path-casing mismatch made the cache report every file as unchanged, so results were stale from the first write and a second `rename_symbol` corrupted files while reporting success.
 
 ### Added
 
-- `rename_symbol` verifies every span still holds the old name before anything
-  reaches disk. The rename is all or nothing: on failure nothing is written and
-  the result carries `reason` explaining what stopped it.
-- `RenameResult` gained `changes`, the per-file occurrence counts behind
-  `totalChanges`.
+- `rename_symbol` verifies every span before writing; on failure nothing is written and `reason` explains why.
+- `RenameResult.changes`, the per-file occurrence counts behind `totalChanges`.
 
 ## [2.0.0] - 2026-08-15
 
-A release focused on agent accuracy: removing the places where the server
-returned a confident answer to a question the caller did not ask, and removing
-the places where an agent had to guess.
-
-Major version because several tool result shapes changed and two tools that
-previously only pretended to change files now really do. See Breaking below.
+Major version: several tool result shapes changed, and two tools that previously
+only pretended to write files now really do.
 
 ### Breaking
 
-- `get_definition` now returns `definitions` (all declarations) and `count`
-  alongside the existing `definition` field. Overloads, merged declarations and
-  `declare` plus implementation pairs previously collapsed to the first hit.
-- `format_document` no longer returns the formatted file content by default. It
-  writes to disk instead; pass `includeContent: true` to get the text back. The
-  result gained a `file` field.
-- `get_diagnostics` now returns `{ diagnostics, total, returned, truncated }`
-  rather than a bare `{ diagnostics }`. It previously capped at 50 silently.
-- `get_references`, `find` and `get_symbols` now return paged results with
-  `total`, `returned`, `offset` and `truncated`.
-- `resources/list` no longer enumerates every project file. Single files remain
-  addressable through the `typescript://file/{path}` template.
-- Tool failures now set `isError: true`. Clients that treated every response as
-  a success will start seeing errors reported as errors.
-- `rename_symbol` and `format_document` now modify files on disk. They
-  previously reported success for changes that never left memory.
-- Removed the unused exports `SYMBOL_KIND_TO_SYNTAX`, `BatchAnalyzeParams`,
-  `FileSpan` and `pathsEqual`, the never-populated `CompletionItem.documentation`
-  field, and the never-emitted `implementation` member of `ReferenceKind`.
+- `get_definition` returns `definitions` and `count` alongside `definition`; overloads no longer collapse to the first hit.
+- `format_document` writes to disk and omits file content by default; pass `includeContent: true`. Gained a `file` field.
+- `get_diagnostics` returns `{ diagnostics, total, returned, truncated }`; it previously capped at 50 silently.
+- `get_references`, `find` and `get_symbols` return paged results with `total`, `returned`, `offset` and `truncated`.
+- `resources/list` no longer enumerates every project file; use the `typescript://file/{path}` template.
+- Tool failures set `isError: true`.
+- `rename_symbol` and `format_document` modify files on disk.
+- Removed unused exports `SYMBOL_KIND_TO_SYNTAX`, `BatchAnalyzeParams`, `FileSpan`, `pathsEqual`, `CompletionItem.documentation` and `ReferenceKind.implementation`.
 
 ### Added
 
-- **Address symbols by name.** Every position-based tool accepts
-  `symbol: "UserService.getUser"` in place of `line` and `column`, including each
-  entry in `batch_analyze`. An ambiguous name returns an error listing the
-  candidates instead of silently choosing one.
-- **`get_code_fixes`** and **`apply_code_fix`**: the fixes TypeScript itself
-  proposes for an error, such as adding a missing import with the correct module
-  path. `applyToAll` fixes every occurrence in a file.
-- **`organize_imports`**: sorts imports and drops unused ones. Previews by
-  default, writes with `apply: true`.
-- **`get_type_definition`**: jumps to a symbol's type rather than to the symbol.
-- **`get_module_dependencies`**: what a file imports and what imports it,
-  resolved through the compiler so tsconfig `paths` aliases and package entry
-  points work. Covers static imports, re-exports, dynamic `import()` and
-  `require()`, and reports efferent/afferent coupling and instability.
-- Navigation results carry the source line they point at, so finding something
-  no longer requires a follow-up file read. Applies to references, definitions,
-  implementations, rename locations, call and type hierarchies, and workspace
-  symbols. `get_references` also takes `contextLines` for surrounding lines.
-- `includeSuggestions` on both diagnostics tools, surfacing unused locals and
-  unused imports.
-- `get_all_diagnostics` now reports tsconfig problems under `config`, which
-  previously only reached stderr at startup, and lists any unanalyzable files
-  under `skippedFiles` rather than dropping them.
-- `rename_preview` reports the `prefixText`/`suffixText` a location needs, so
-  edits applied by hand stay correct.
-- `.mts`, `.cts`, `.mjs` and `.cjs` files are now indexed.
+- Address symbols by name: `symbol: "UserService.getUser"` in place of `line`/`column` on every position tool. Ambiguous names return the candidates.
+- `get_code_fixes` and `apply_code_fix`, with `applyToAll`.
+- `organize_imports`; previews by default, writes with `apply: true`.
+- `get_type_definition`.
+- `get_module_dependencies`, covering static imports, re-exports, dynamic `import()` and `require()`, plus coupling and instability.
+- Navigation results carry the source line they point at. `get_references` takes `contextLines`.
+- `includeSuggestions` on both diagnostics tools.
+- `get_all_diagnostics` reports tsconfig problems under `config` and unanalyzable files under `skippedFiles`.
+- `rename_preview` reports the `prefixText`/`suffixText` a location needs.
+- `.mts`, `.cts`, `.mjs` and `.cjs` are indexed.
 - `docs/refactoring-tools.md`.
 
 ### Fixed
 
-- **The server no longer breaks on projects whose tsconfig excludes JavaScript.**
-  `refreshChangedFiles` re-walked the whole project root and pulled in files the
-  tsconfig excluded. Those files became compiler roots it could not produce
-  source files for, so `get_all_diagnostics`, `find_indirection_hotspots` and
-  `get_diagnostics` on a `.js` file failed for the entire project. The file set
-  is now re-resolved from tsconfig on every refresh.
-- **Renames no longer corrupt shorthand properties and aliased imports.** The
-  rename request asked TypeScript not to supply prefix/suffix text, so
-  `{ timeout }` was rewritten as `{ timeoutMs }`, silently changing an object's
-  key, instead of `{ timeout: timeoutMs }`.
-- **`get_type_hierarchy` no longer reports fabricated file paths.** Subtype
-  lookup parsed every file under the literal name `temp.ts` and reported paths
-  derived from it. It also matched heritage clauses by name text, so an
-  unrelated type sharing a name was reported as a subtype, and it converted
-  supertype positions using the wrong file's line map.
-- **The YAML serializer no longer corrupts values.** Strings such as `"true"`,
-  `"null"` and `"123"` were emitted unquoted and parsed back as a boolean, null
-  or number, reachable through `find` on string literals. Nested arrays were
-  emitted as malformed YAML, which affected `find_indirection_hotspots`'s
-  `worstChains`, its primary payload.
-- **Out-of-range positions are an error rather than a clamp.** A line past the
-  end of a file silently resolved to offset 0 and returned an analysis of the
-  file's first character.
-- `get_references` now emits the `definition` kind its description always
-  promised; the underlying API it used carried no such flag.
-- `get_workspace_symbols` positions now point at the symbol's name rather than
-  the start of its declaration, making them usable as input to position tools.
-- A single unanalyzable file no longer aborts `get_all_diagnostics` or
-  `find_indirection_hotspots`.
-- The `find` tool's `path` argument is validated; a typo previously returned no
-  matches, which reads as "this symbol does not exist".
-- `quality_report` now reports the most-coupled files it already computed and
-  then discarded.
-- Coupling analysis resolves modules through the compiler, so projects using
-  tsconfig `paths` aliases get correct numbers.
-- `--version` and the MCP handshake report the real package version, which had
-  drifted to `1.0.0` while the package was at `1.2.0`.
+- Projects whose tsconfig excludes JavaScript no longer break every program-backed tool.
+- Renames no longer corrupt shorthand properties and aliased imports (`{ timeout }` became `{ timeoutMs }`).
+- `get_type_hierarchy` no longer reports fabricated paths, matches unrelated same-named types, or misconverts supertype positions.
+- The YAML serializer no longer emits `"true"`, `"null"` and `"123"` unquoted, nor malformed nested arrays.
+- Out-of-range positions are an error rather than silently resolving to offset 0.
+- `get_references` emits the `definition` kind its description promised.
+- `get_workspace_symbols` positions point at the symbol's name, usable as input to position tools.
+- One unanalyzable file no longer aborts `get_all_diagnostics` or `find_indirection_hotspots`.
+- The `find` tool validates its `path` argument.
+- `quality_report` reports the most-coupled files it already computed.
+- Coupling analysis resolves modules through the compiler, so tsconfig `paths` aliases work.
+- `--version` and the MCP handshake report the real package version.
 - `--help` no longer advertises a stale subset of the tools.
 
 ### Changed
 
-- `src/tools.ts` was split into `src/tools/` modules grouped by domain, with a
-  registry replacing the hand-maintained dispatch switch.
+- `src/tools.ts` split into `src/tools/` modules with a registry replacing the dispatch switch.
 - Removed `src/package.json`, a stale duplicate of the root manifest.
-- `detect_duplication` no longer claims to find near-duplicates. It matches
-  exact structure ignoring identifiers and literals, so renamed copies are found
-  but a copy with an extra statement is not.
-- README corrected: the server does not watch the filesystem, it re-checks
-  changed files on request.
+- `detect_duplication` matches exact structure ignoring identifiers and literals; it no longer claims to find near-duplicates.
+- README corrected: the server re-checks changed files on request rather than watching.
 
 ## [1.2.0] - 2026-04-13
 
@@ -183,10 +113,8 @@ than tags.
 
 ### Added
 
-- ESLint diagnostics merged into `get_diagnostics` and `get_all_diagnostics`,
-  loaded from the target project when available.
-- Code quality tools: `calculate_metrics`, `detect_duplication`,
-  `find_indirection_hotspots` and `quality_report`.
+- ESLint diagnostics merged into `get_diagnostics` and `get_all_diagnostics`.
+- `calculate_metrics`, `detect_duplication`, `find_indirection_hotspots` and `quality_report`.
 
 ## [1.1.0] - 2026-02-16
 
@@ -215,7 +143,8 @@ Initial release: TypeScript language intelligence exposed over MCP, covering
 navigation, type information, code structure, semantic search, diagnostics,
 renames and formatting.
 
-[Unreleased]: https://github.com/jgauffin/ts-language-mcp/compare/v2.2.0...HEAD
+[Unreleased]: https://github.com/jgauffin/ts-language-mcp/compare/v2.3.0...HEAD
+[2.3.0]: https://github.com/jgauffin/ts-language-mcp/compare/v2.2.0...v2.3.0
 [2.2.0]: https://github.com/jgauffin/ts-language-mcp/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/jgauffin/ts-language-mcp/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/jgauffin/ts-language-mcp/compare/6ac6ec7...v2.0.0
