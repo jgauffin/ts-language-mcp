@@ -1,5 +1,4 @@
-import type { TypeScriptLanguageService } from './language-service.js';
-import type { FilePosition, WorkspaceSymbol } from './types.js';
+import type { LanguageIntelligence, FilePosition, WorkspaceSymbol } from './types.js';
 
 /** How many candidates to search before giving up on an exact match. */
 const SEARCH_LIMIT = 200;
@@ -20,9 +19,9 @@ const MAX_REPORTED_CANDIDATES = 10;
  * resolver.resolve('getUser', 'src/services/api.ts'); // scoped to one file
  */
 export class SymbolResolver {
-  private languageService: TypeScriptLanguageService;
+  private languageService: LanguageIntelligence;
 
-  constructor(languageService: TypeScriptLanguageService) {
+  constructor(languageService: LanguageIntelligence) {
     this.languageService = languageService;
   }
 

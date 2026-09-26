@@ -1,5 +1,21 @@
-import type { TypeScriptLanguageService } from '../language-service.js';
+import type { LanguageIntelligence } from '../types.js';
 import type { AstFinder } from '../ast-finder.js';
+
+/**
+ * What a multi-config project can additionally say about a file: whether any
+ * tsconfig governs it, and how to explain the answer when none does. A
+ * single-config service has no such distinction to report, so this is separate
+ * from the language surface every service implements.
+ */
+export interface MultiConfigProject {
+  isFileUnconfigured(filePath: string): boolean;
+  fileExistsOnDisk(filePath: string): boolean;
+  unconfiguredWarning(filePath: string): string;
+  /** True when the working tree has moved to different code since the last refresh. */
+  hasGitStateChanged(): boolean;
+  /** Calls back when the working tree moves; returns a function to stop. */
+  watchForBranchChanges(onChange: () => void): () => void;
+}
 import type { ComplexityAnalyzer } from '../analyzers/complexity-analyzer.js';
 import type { CouplingAnalyzer } from '../analyzers/coupling-analyzer.js';
 import type { IndirectionAnalyzer } from '../analyzers/indirection-analyzer.js';
@@ -10,7 +26,7 @@ import type { DuplicationDetector } from '../analyzers/duplication-detector.js';
  * Passed to each handler so tool modules stay free of construction concerns.
  */
 export interface ToolContext {
-  languageService: TypeScriptLanguageService;
+  languageService: LanguageIntelligence;
   astFinder: AstFinder;
   complexity: ComplexityAnalyzer;
   coupling: CouplingAnalyzer;

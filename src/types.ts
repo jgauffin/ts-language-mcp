@@ -1,3 +1,5 @@
+import type ts from 'typescript';
+
 /**
  * Minimal project interface for analyzers and AST tools.
  * Enables testing with in-memory implementations.
@@ -555,5 +557,128 @@ export interface WorkspaceSymbol {
   column: number;
   containerName?: string;
   text?: string;
+}
+
+// ── Language Intelligence ──
+
+/** How much a diagnostics request reports, and how much of it is returned. */
+export interface DiagnosticOptions {
+  includeEslint?: boolean;
+  limit?: number;
+  includeSuggestions?: boolean;
+}
+
+/**
+ * Every question that can be asked about a project's code.
+ *
+ * A repository often spreads its sources over several tsconfigs, so the answer
+ * to most of these depends on which config governs the file being asked about.
+ * Stating the whole surface in one interface is what forces a multi-config
+ * implementation to route every question: leaving one unrouted stops
+ * compiling rather than quietly answering from the wrong project.
+ *
+ * Members taking an optional `file` are the ones whose answer varies by
+ * governing config. A single-project implementation ignores the argument.
+ */
+export interface LanguageIntelligence extends ProjectContext {
+  // ── Project identity and configuration ──
+
+  /** The tsconfig a file is checked against. */
+  getConfigPath(filePath?: string): string;
+  /** True when no tsconfig covers the file, so options are inferred. */
+  isUnconfigured(filePath?: string): boolean;
+  getCompilerOptions(filePath?: string): ts.CompilerOptions;
+  getProgram(filePath?: string): ts.Program | undefined;
+  getProjectRoot(): string;
+  getProjectFiles(): string[];
+  getFileContent(filePath: string): string | undefined;
+  resolveModule(specifier: string, containingFile: string): string | undefined;
+
+  // ── File cache ──
+
+  loadFile(filePath: string): void;
+  updateFile(filePath: string, content: string): void;
+  refreshChangedFiles(): void;
+  /** Files whose unsaved changes the last refresh replaced, reported once. */
+  takeDiscardedEdits(): string[];
+
+  // ── Navigation ──
+
+  getHover(filePath: string, line: number, column: number): string | undefined;
+  getDefinition(filePath: string, line: number, column: number): FilePosition | undefined;
+  getDefinitions(filePath: string, line: number, column: number): FilePosition[];
+  getTypeDefinition(filePath: string, line: number, column: number): FilePosition[];
+  getImplementations(filePath: string, line: number, column: number): FilePosition[];
+  getReferences(
+    filePath: string,
+    line: number,
+    column: number,
+    contextLines?: number
+  ): ReferenceInfo[];
+  getCallHierarchy(
+    filePath: string,
+    line: number,
+    column: number,
+    direction: 'incoming' | 'outgoing'
+  ): CallHierarchyCall[];
+  getTypeHierarchy(
+    filePath: string,
+    line: number,
+    column: number,
+    direction: 'supertypes' | 'subtypes'
+  ): TypeHierarchyItem[];
+
+  // ── Type intelligence ──
+
+  getCompletions(filePath: string, line: number, column: number): CompletionItem[];
+  getSignature(filePath: string, line: number, column: number): SignatureInfo | undefined;
+  analyzePosition(filePath: string, line: number, column: number): Promise<PositionAnalysis>;
+
+  // ── Structure ──
+
+  getSymbols(filePath: string): SymbolInfo[];
+  getOutline(filePath: string): OutlineItem[];
+  getImports(filePath: string): ImportInfo[];
+  getWorkspaceSymbols(query: string, maxResults?: number, file?: string): WorkspaceSymbol[];
+  getModuleDependencies(
+    filePath: string,
+    options?: { direction?: 'imports' | 'importedBy' | 'both'; includeExternal?: boolean }
+  ): ModuleDependenciesResult;
+
+  // ── Diagnostics ──
+
+  getDiagnostics(
+    filePath: string,
+    options?: DiagnosticOptions
+  ): Promise<Diagnostic[]>;
+  getAllDiagnostics(
+    severity?: DiagnosticSeverity,
+    options?: DiagnosticOptions
+  ): Promise<AllDiagnosticsResult>;
+  getCompilerOptionsDiagnostics(): Diagnostic[];
+
+  // ── Refactoring ──
+
+  getRenameLocations(
+    filePath: string,
+    line: number,
+    column: number,
+    newName: string
+  ): RenameLocation[];
+  applyRename(filePath: string, line: number, column: number, newName: string): RenameResult;
+  getCodeFixes(filePath: string, line: number, column: number, errorCodes?: number[]): CodeFix[];
+  applyCodeFix(
+    filePath: string,
+    line: number,
+    column: number,
+    fixName: string,
+    applyToAll?: boolean
+  ): ApplyEditsResult;
+  organizeImports(filePath: string, apply?: boolean): OrganizeImportsResult;
+  formatDocument(
+    filePath: string,
+    options?: FormatOptions,
+    includeContent?: boolean
+  ): FormatResult;
 }
 

@@ -81,7 +81,6 @@ export class CouplingAnalyzer {
     afferent: Map<string, string[]>;
   } {
     const projectFiles = this.context.getProjectFiles();
-    const projectRoot = this.context.getProjectRoot();
 
     // Build a set of project files for quick lookup (normalized, without extension)
     const projectFileSet = new Set(projectFiles);

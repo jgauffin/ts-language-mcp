@@ -1,4 +1,4 @@
-import type { TypeScriptLanguageService } from '../language-service.js';
+import type { LanguageIntelligence } from '../types.js';
 import type { AstFinder } from '../ast-finder.js';
 import { ComplexityAnalyzer } from '../analyzers/complexity-analyzer.js';
 import { CouplingAnalyzer } from '../analyzers/coupling-analyzer.js';
@@ -8,7 +8,13 @@ import { toYaml } from '../yaml.js';
 import { normalizePath } from '../paths.js';
 import { SymbolResolver } from '../symbol-resolver.js';
 import { validateArguments } from './validate-arguments.js';
-import type { ToolContext, ToolDefinition, ToolHandlerFn, ToolModule } from './context.js';
+import type {
+  ToolContext,
+  ToolDefinition,
+  ToolHandlerFn,
+  ToolModule,
+  MultiConfigProject,
+} from './context.js';
 
 import { navigationTools } from './navigation.js';
 import { intelligenceTools } from './intelligence.js';
@@ -17,7 +23,13 @@ import { diagnosticsTools } from './diagnostics.js';
 import { refactoringTools } from './refactoring.js';
 import { qualityTools } from './quality.js';
 
-export type { ToolContext, ToolDefinition, ToolHandlerFn, ToolModule } from './context.js';
+export type {
+  ToolContext,
+  ToolDefinition,
+  ToolHandlerFn,
+  ToolModule,
+  MultiConfigProject,
+} from './context.js';
 export { TOOL_SCHEMAS } from './schemas.js';
 
 /** Every tool module, in the order tools are advertised to clients. */
@@ -64,9 +76,10 @@ export class ToolHandler {
   private symbolResolver: SymbolResolver;
   private requestQueue: Promise<unknown> = Promise.resolve();
   private lastRefreshTime = 0;
+  private stopWatching: (() => void) | null = null;
   private static REFRESH_INTERVAL_MS = 2000;
 
-  constructor(languageService: TypeScriptLanguageService, astFinder: AstFinder) {
+  constructor(languageService: LanguageIntelligence, astFinder: AstFinder) {
     this.context = {
       languageService,
       astFinder,
@@ -76,6 +89,43 @@ export class ToolHandler {
       duplication: new DuplicationDetector(languageService),
     };
     this.symbolResolver = new SymbolResolver(languageService);
+    this.stopWatching = this.registry()?.watchForBranchChanges(() => this.queueRefresh()) ?? null;
+  }
+
+  /**
+   * Rebuilds after a branch change, without waiting for a request to ask.
+   *
+   * Joins the request queue rather than running straight away: replacing a
+   * language service underneath a tool call already being answered would have
+   * it finish against a program that no longer exists.
+   */
+  private queueRefresh(): void {
+    const task = this.requestQueue.then(() => {
+      this.lastRefreshTime = Date.now();
+      this.context.languageService.refreshChangedFiles();
+    });
+    this.requestQueue = task.catch(() => {});
+  }
+
+  /**
+   * Releases the branch watcher. The server holds no other resource that
+   * outlives it, so this is all a shutdown has to do.
+   */
+  dispose(): void {
+    this.stopWatching?.();
+    this.stopWatching = null;
+  }
+
+  /**
+   * The language service as a multi-config project, when it is one. Lets the
+   * handler warn about files no tsconfig governs without requiring a
+   * multi-config service to be in use.
+   */
+  private registry(): MultiConfigProject | undefined {
+    const service = this.context.languageService as Partial<MultiConfigProject>;
+    return typeof service.isFileUnconfigured === 'function'
+      ? (service as MultiConfigProject)
+      : undefined;
   }
 
   /**
@@ -110,6 +160,13 @@ export class ToolHandler {
         `Use the "get_workspace_symbols" tool or "typescript://project/files" resource to discover files.`
       );
     }
+
+    // A file that exists but sits outside every tsconfig is a different
+    // problem from a missing one, and saying "not found" for it sends the
+    // caller hunting a typo that is not there. The registry analyses it under
+    // inferred options and the caller is warned, so this is not a failure.
+    const registry = this.registry();
+    if (registry?.fileExistsOnDisk(file)) return;
 
     // Check if the file exists in the project
     if (!this.context.languageService.getFileContent(file)) {
@@ -176,9 +233,16 @@ export class ToolHandler {
     try {
       // Always refresh for diagnostic tools to avoid stale results;
       // throttle other tools to avoid re-walking the directory tree on every call.
+      // A branch switch overrides the throttle: waiting out the window would
+      // answer from code the developer has already left behind.
       const now = Date.now();
       const isDiagnostic = name === 'get_diagnostics' || name === 'get_all_diagnostics';
-      if (isDiagnostic || now - this.lastRefreshTime >= ToolHandler.REFRESH_INTERVAL_MS) {
+      const branchMoved = this.registry()?.hasGitStateChanged() ?? false;
+      if (
+        isDiagnostic ||
+        branchMoved ||
+        now - this.lastRefreshTime >= ToolHandler.REFRESH_INTERVAL_MS
+      ) {
         this.lastRefreshTime = now;
         this.context.languageService.refreshChangedFiles();
       }
@@ -218,9 +282,12 @@ export class ToolHandler {
       }
 
       const result = await this.dispatch(name, resolvedArgs);
+      const annotated = this.withDiscardedEditsNotice(
+        this.withUnconfiguredWarning(result, resolvedArgs)
+      );
       const text = JSON_TOOLS.has(name)
-        ? JSON.stringify(result, null, 2)
-        : toYaml(result);
+        ? JSON.stringify(annotated, null, 2)
+        : toYaml(annotated);
       return {
         content: [{ type: 'text', text }],
       };
@@ -235,6 +302,42 @@ export class ToolHandler {
     }
   }
 
+  /**
+   * Marks a result that was produced without a governing tsconfig, so an agent
+   * can weigh unresolved-name errors instead of taking them at face value.
+   *
+   * Rides with the result rather than replacing it: the analysis is still the
+   * best available answer, it just rests on inferred options.
+   */
+  private withUnconfiguredWarning(result: unknown, args: Record<string, unknown>): unknown {
+    const file = args.file;
+    if (typeof file !== 'string') return result;
+
+    const registry = this.registry();
+    if (!registry?.isFileUnconfigured(file)) return result;
+
+    return annotate(result, 'warning', registry.unconfiguredWarning(file));
+  }
+
+  /**
+   * Tells the caller that unsaved changes they had handed the server were
+   * replaced by newer content on disk.
+   *
+   * A branch switch is the usual cause: the file the caller edited in memory no
+   * longer exists in that form. Disk wins, but staying silent would leave them
+   * reading results that contradict the edit they think is in place.
+   */
+  private withDiscardedEditsNotice(result: unknown): unknown {
+    const discarded = this.context.languageService.takeDiscardedEdits();
+    if (discarded.length === 0) return result;
+
+    const notice =
+      `Unsaved changes to ${discarded.join(', ')} were replaced by newer content ` +
+      `on disk, so this result describes the files as they are now stored.`;
+
+    return annotate(result, 'notice', notice);
+  }
+
   private dispatch(name: string, args: Record<string, unknown>): unknown | Promise<unknown> {
     const handler = HANDLERS[name];
     if (!handler) {
@@ -242,4 +345,18 @@ export class ToolHandler {
     }
     return handler(args, this.context);
   }
+}
+
+/**
+ * Attaches a note to a tool result without displacing it.
+ *
+ * Results come back as objects, arrays or bare values, and each has to keep its
+ * shape: an array folded into an object would break every caller that iterates
+ * it, so it is carried under "results" instead.
+ */
+function annotate(result: unknown, key: string, message: string): unknown {
+  if (result === null || result === undefined) return { [key]: message };
+  if (Array.isArray(result)) return { [key]: message, results: result };
+  if (typeof result === 'object') return { [key]: message, ...(result as object) };
+  return { [key]: message, result };
 }

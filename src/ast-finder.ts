@@ -49,7 +49,7 @@ export class AstFinder {
 
       // Find comments if requested
       if (findComments) {
-        this.findComments(sourceFile, content, filePath, query, results);
+        this.findComments(sourceFile, filePath, query, results);
       }
 
       // Find other symbols if requested
@@ -83,7 +83,7 @@ export class AstFinder {
             file: filePath,
             line: line + 1, // 1-based
             column: character + 1,
-            snippet: this.getSnippet(node, sourceFile),
+            snippet: this.getSnippet(node),
             exported: isExported,
           });
         });
@@ -98,7 +98,6 @@ export class AstFinder {
    */
   private findComments(
     sourceFile: ts.SourceFile,
-    content: string,
     filePath: string,
     query: string | undefined,
     results: FindResult[]
@@ -394,8 +393,7 @@ export class AstFinder {
   /**
    * Extracts a code snippet around the node (first line of declaration).
    */
-  private getSnippet(node: ts.Node, sourceFile: ts.SourceFile): string {
-    const start = node.getStart();
+  private getSnippet(node: ts.Node): string {
     const text = node.getText();
 
     // Get first line only, trimmed

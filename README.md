@@ -113,10 +113,10 @@ Tools marked **by name** accept `symbol` in place of `line`/`column`.
 ## Development
 
 ```bash
-npm test          # Run tests (watch)
-npm run test:run  # Run tests once
-npm run build     # Build
-npm run dev       # Watch mode
+npm test            # Run tests once
+npm run test:watch  # Run tests in watch mode
+npm run build       # Build
+npm run dev         # Watch mode
 ```
 
 ## Architecture
