@@ -7,6 +7,7 @@ import { DuplicationDetector } from '../analyzers/duplication-detector.js';
 import { toYaml } from '../yaml.js';
 import { normalizePath } from '../paths.js';
 import { SymbolResolver } from '../symbol-resolver.js';
+import { validateArguments } from './validate-arguments.js';
 import type { ToolContext, ToolDefinition, ToolHandlerFn, ToolModule } from './context.js';
 
 import { navigationTools } from './navigation.js';
@@ -37,6 +38,11 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = TOOL_MODULES.flatMap(
 /** Name to handler lookup, replacing a hand-maintained dispatch switch. */
 const HANDLERS: Record<string, ToolHandlerFn> = Object.fromEntries(
   TOOL_MODULES.flatMap((m) => Object.entries(m.handlers))
+);
+
+/** The schema each tool's arguments are checked against before dispatch. */
+const SCHEMAS: Record<string, unknown> = Object.fromEntries(
+  TOOL_DEFINITIONS.map((d) => [d.name, d.inputSchema])
 );
 
 /**
@@ -158,6 +164,11 @@ export class ToolHandler {
     return task;
   }
 
+  /** The positions of a batch_analyze call, an array by the time validation is done. */
+  private batchPositions(args: Record<string, unknown>): Array<Record<string, unknown>> {
+    return args.positions as Array<Record<string, unknown>>;
+  }
+
   private async executeToolCall(
     name: string,
     args: Record<string, unknown>
@@ -172,16 +183,18 @@ export class ToolHandler {
         this.context.languageService.refreshChangedFiles();
       }
 
+      // Before resolution: resolving a symbol supplies file/line/column, which
+      // would satisfy a schema the caller never actually satisfied.
+      validateArguments(name, SCHEMAS[name], args);
+
       // A symbol name stands in for a position, so resolve it before anything
       // downstream expects line/column to be present.
       let resolvedArgs = this.resolvePosition(args);
 
-      if (name === 'batch_analyze' && Array.isArray(resolvedArgs.positions)) {
+      if (name === 'batch_analyze') {
         resolvedArgs = {
           ...resolvedArgs,
-          positions: resolvedArgs.positions.map((pos) =>
-            this.resolvePosition(pos as Record<string, unknown>)
-          ),
+          positions: this.batchPositions(resolvedArgs).map((pos) => this.resolvePosition(pos)),
         };
       }
 
@@ -190,10 +203,10 @@ export class ToolHandler {
         this.validateFilePath(resolvedArgs.file);
       }
       // Validate file paths in batch_analyze positions
-      if (name === 'batch_analyze' && Array.isArray(resolvedArgs.positions)) {
-        for (const pos of resolvedArgs.positions) {
-          if (typeof pos === 'object' && pos !== null && typeof (pos as Record<string, unknown>).file === 'string') {
-            this.validateFilePath((pos as Record<string, unknown>).file as string);
+      if (name === 'batch_analyze') {
+        for (const pos of this.batchPositions(resolvedArgs)) {
+          if (typeof pos.file === 'string') {
+            this.validateFilePath(pos.file);
           }
         }
       }

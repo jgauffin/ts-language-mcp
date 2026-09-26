@@ -21,6 +21,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   at those offsets and shredded the file while reporting success. Diagnostics,
   references and definitions were stale from the first write onwards.
 
+- **A missing argument is now reported as a missing argument.** Tool arguments
+  were never checked against the schema the tool advertises, so `batch_analyze`
+  without `positions` failed with `Cannot read properties of undefined (reading
+  'map')`, position tools with neither coordinates nor a symbol failed with a
+  Node path error, and `rename_symbol` without `newName` renamed the symbol to
+  the literal text `undefined` in every file and reported success. Arguments are
+  now validated before dispatch, naming the argument and the shape it accepts.
+
 ### Added
 
 - `rename_symbol` verifies every span still holds the old name before anything
